@@ -14,7 +14,33 @@ export const HUD_TILES = 256;
 export interface RaceGfx {
   obj: Uint8Array;
   hud: Uint8Array;
+  /** The menu font (2bpp): the lap time list after the finish is written in it. */
+  font: Uint8Array;
+  /**
+   * The big place number: per screen line, two windows (left, right, left, right) where the game adds a
+   * color to the picture (window 1 XOR window 2 makes the holes in 4, 6, 8). Digit n starts at line
+   * PLACE_FIRST + (n - 1) * PLACE_STRIDE and is PLACE_LINES tall.
+   */
+  place: Uint8Array;
 }
+
+/**
+ * Battle balloons: the game puts them at sprite tiles 0x120-0x12C (top halves) and 0x130-0x13C (bottom
+ * halves): 2x2 balloons of 16, 14, 12, 10 and 9 px, then 8x8 ones. Here they go to the unused tiles at 0x1A0.
+ */
+const BALLOON_TOP_BLOCK = 0x0e96;
+const BALLOON_BOTTOM_BLOCK = 0x0d43;
+const BALLOON_BOTTOM_AT = 0x292;
+export const BALLOON_TILES = 0x1a0;
+
+/** Menu font, and the place number's window shapes (found as the HDMA source of the number). */
+const FONT_BLOCK = 0x70000;
+const PLACE_BLOCK = 0x5e760;
+export const PLACE_FIRST = 162;
+export const PLACE_STRIDE = 64;
+export const PLACE_LINES = 57;
+/** Screen line of the number's first row. */
+export const PLACE_TOP = 41;
 
 /** [block offset, bytes from, bytes to, destination byte in `obj`] */
 const OBJ_COPIES: [number, number, number, number][] = [
@@ -41,5 +67,7 @@ export function loadRaceGfx(rom: SmkRom): RaceGfx | null {
   }
   const hud = new Uint8Array(HUD_TILES * 16);
   hud.set(decompress(rom.data, HUD_BLOCK).subarray(0, 0x700), 0x80 * 16);
-  return { obj, hud };
+  obj.set(decompress(rom.data, BALLOON_TOP_BLOCK).subarray(0, 13 * 32), BALLOON_TILES * 32);
+  obj.set(decompress(rom.data, BALLOON_BOTTOM_BLOCK).subarray(BALLOON_BOTTOM_AT, BALLOON_BOTTOM_AT + 13 * 32), (BALLOON_TILES + 16) * 32);
+  return { obj, hud, font: decompress(rom.data, FONT_BLOCK), place: decompress(rom.data, PLACE_BLOCK) };
 }

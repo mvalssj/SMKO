@@ -8,11 +8,12 @@ export const NET_HZ = 20;
 export const COUNTDOWN_MS = 5200;
 /** Grand Prix points by finishing place (from the ROM: 9, 6, 3, 1, then nothing). */
 export const GP_POINTS = [9, 6, 3, 1, 0, 0, 0, 0];
+/** Battle Mode: balloons each player starts with, and the longest a battle lasts. */
+export const BATTLE_BALLOONS = 3;
+export const BATTLE_MAX_MS = 180_000;
 /** Pause between the races of an online Grand Prix. */
 export const GP_NEXT_RACE_MS = 9000;
 export type Cc = 50 | 100 | 150;
-/** Top speed per engine class. */
-export const CC_SPEED: Record<Cc, number> = { 50: 0.82, 100: 0.91, 150: 1 };
 /** Simulation step, shared by clients and server (race frames). */
 export const STEP_MS = 1000 / 60;
 
@@ -32,7 +33,17 @@ export interface ItemOdds {
   back: number[];
 }
 
-export type EntityKind = 'banana' | 'greenShell' | 'redShell';
+export type EntityKind = 'banana' | 'greenShell' | 'redShell' | CpuItemKind;
+
+/**
+ * Items only computer drivers use, each character its own (Mario and Luigi turn invincible with a star,
+ * Donkey Kong Jr. drops bananas, Koopa Troopa green shells): Peach and Toad drop poison mushrooms (they shrink
+ * whoever touches them), Bowser drops fireballs that roll about, Yoshi drops eggs.
+ */
+export type CpuItemKind = 'poison' | 'fireball' | 'egg';
+
+/** What each character's CPU drops, in CHARACTER_NAMES order ('star' = turns invincible instead). */
+export const CPU_SPECIAL: (EntityKind | 'star')[] = ['star', 'star', 'fireball', 'poison', 'banana', 'greenShell', 'poison', 'egg'];
 
 /** An item lying on or moving along the track. */
 export interface NetEntity {
@@ -55,6 +66,8 @@ export type EffectKind = 'mushroom' | 'star' | 'feather' | 'ghost' | 'lightning'
 export const EFFECT_STAR = 1;
 export const EFFECT_GHOST = 2;
 export const EFFECT_SHRUNK = 4;
+/** Mushroom, zipper, mini-turbo or start boost. */
+export const EFFECT_BOOST = 8;
 
 export interface PlayerInfo {
   id: number;
@@ -78,6 +91,8 @@ export interface KartNetState {
   x: number;
   y: number;
   a: number; // heading, radians
+  /** Kart body's swing out of the heading in a skid / power slide, radians (drawing only). */
+  d?: number;
   s: number; // speed
   lap: number;
   p: number; // race progress (lap * pathLength + path index); higher = ahead
@@ -104,15 +119,15 @@ export type ClientMsg =
   | { t: 'character'; character: number; ready: boolean }
   | { t: 'track'; track: number } // host only, index into SmkRom.tracks
   /** Host only: 1 track (single race) or 5 (Grand Prix); odds per track come from the host's ROM; cpus = fill empty slots. */
-  | { t: 'start'; tracks?: number[]; odds?: ItemOdds[]; cpus?: boolean; cc?: Cc }
+  | { t: 'start'; tracks?: number[]; odds?: ItemOdds[]; cpus?: boolean; cc?: Cc; battle?: boolean }
   | { t: 'lobby' } // host only: back to lobby after results
   | { t: 'state'; k: Omit<KartNetState, 'id'> }
   /** `cpu`: the host reports a CPU kart finishing. */
   | { t: 'finish'; timeMs: number; cpu?: number }
   /** Host only: states of the CPU karts it simulates. */
   | { t: 'cpu'; karts: KartNetState[] }
-  /** Host only: a CPU drops a banana. */
-  | { t: 'cpuDrop'; cpu: number; x: number; y: number; a: number }
+  /** Host only: a CPU drops its special item. */
+  | { t: 'cpuDrop'; cpu: number; x: number; y: number; a: number; kind: EntityKind }
   | { t: 'break'; tiles: number[] }
   /** Drove over an item box (its map tiles). */
   | { t: 'box'; tiles: number[] }
@@ -121,13 +136,19 @@ export type ClientMsg =
   /** Use the held item; `back` throws a shell behind (bananas always go behind). */
   | { t: 'use'; x: number; y: number; a: number; back: boolean }
   /** This client's kart (or, from the host, CPU `cpu`) was hit by an entity. */
-  | { t: 'hit'; entity: number; cpu?: number };
+  | { t: 'hit'; entity: number; cpu?: number }
+  /** Battle: this player lost a balloon to something that isn't a thrown item (a star kart, a fall). */
+  | { t: 'pop' };
 
 export type ServerMsg =
   | { t: 'welcome'; id: number }
   | { t: 'room'; room: string; hostId: number; phase: Phase; track: number; players: PlayerInfo[] }
   /** `players` includes the CPUs; `cpuHost` is the player whose browser simulates them. */
-  | { t: 'race'; track: number; laps: number; grid: number[]; startInMs: number; players: PlayerInfo[]; cpuHost: number; cc: Cc; round: number; rounds: number }
+  | { t: 'race'; track: number; laps: number; grid: number[]; startInMs: number; players: PlayerInfo[]; cpuHost: number; cc: Cc; round: number; rounds: number; battle?: boolean }
+  /** Battle: a player's balloons (0 = out). */
+  | { t: 'balloons'; id: number; n: number }
+  /** The player now simulating the CPUs (the previous one left mid-race). */
+  | { t: 'cpuHost'; id: number }
   | { t: 'states'; karts: KartNetState[] }
   | { t: 'finished'; id: number; place: number; timeMs: number }
   /** `standings`: Grand Prix points so far; `final` = last race of the event. */

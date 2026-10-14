@@ -8,7 +8,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
-  CHARACTER_NAMES, COUNTDOWN_MS, CPU_ID_BASE, GP_NEXT_RACE_MS, GP_POINTS, MAX_PLAYERS, NET_HZ, TOTAL_LAPS,
+  BATTLE_BALLOONS, BATTLE_MAX_MS, CHARACTER_NAMES, COUNTDOWN_MS, CPU_ID_BASE, GP_NEXT_RACE_MS, GP_POINTS, MAX_PLAYERS, NET_HZ, TOTAL_LAPS,
   type ClientMsg, type Cc, type ItemOdds, type KartNetState, type Standing, type Phase, type PlayerInfo, type ResultEntry, type ServerMsg,
 } from '../shared/protocol';
 import { DEFAULT_ODDS, ItemAuthority, validOdds } from '../shared/items';
@@ -26,6 +26,9 @@ interface Player {
   info: PlayerInfo;
   kart: KartNetState | null;
   finishMs: number | null;
+  /** When the last accepted kart state arrived, and impossible moves refused in a row (speed check). */
+  lastStateAt?: number;
+  rejected?: number;
 }
 
 interface Room {
@@ -44,9 +47,14 @@ interface Room {
   cpuHost: number;
   /** Starting order of the current race (racers only). */
   grid: number[];
-  /** The event being run: one race, or the 5 races of a cup. */
-  gp: { tracks: number[]; odds: ItemOdds[]; round: number; points: Map<number, number>; cc: Cc; cpus: boolean } | null;
+  /** The event being run: one race, the 5 races of a cup, or a battle. */
+  gp: { tracks: number[]; odds: ItemOdds[]; round: number; points: Map<number, number>; cc: Cc; cpus: boolean; battle: boolean } | null;
   nextRace: NodeJS.Timeout | null;
+  /** Battle: balloons left per player, and who went out, in order. */
+  balloons: Map<number, number>;
+  outOrder: number[];
+  /** Map tiles broken this race (fences, ice blocks), for players who arrive mid-race. */
+  broken: Set<number>;
 }
 
 const rooms = new Map<string, Room>();
@@ -87,7 +95,8 @@ wss.on('connection', (ws) => {
       let r = rooms.get(code);
       if (!r) {
         r = { code, romCrc: msg.romCrc >>> 0, hostId: id, phase: 'lobby', track: 0, players: new Map(),
-              raceStart: 0, finishOrder: [], firstFinishAt: 0, timer: null, items: null, cpuHost: 0, grid: [], gp: null, nextRace: null };
+              raceStart: 0, finishOrder: [], firstFinishAt: 0, timer: null, items: null, cpuHost: 0, grid: [], gp: null, nextRace: null,
+              balloons: new Map(), outOrder: [], broken: new Set() };
         rooms.set(code, r);
       }
       if (r.romCrc !== msg.romCrc >>> 0) return send(ws, { t: 'error', message: 'Sua ROM é diferente da ROM do anfitrião da sala (use a mesma versão/região).' });
@@ -106,6 +115,8 @@ wss.on('connection', (ws) => {
       if (r.phase === 'countdown' || r.phase === 'racing') {
         send(ws, raceMsg(r, r.raceStart - Date.now()));
         r.items?.snapshot(id);
+        if (r.broken.size) send(ws, { t: 'break', tiles: [...r.broken] });
+        for (const [pid, n] of r.balloons) send(ws, { t: 'balloons', id: pid, n });
       }
       return;
     }
@@ -151,7 +162,9 @@ wss.on('connection', (ws) => {
           if (!tracks.length) tracks.push(r.track);
           const odds = tracks.map((_, i) => (Array.isArray(msg.odds) && validOdds(msg.odds[i]) ? msg.odds[i] : DEFAULT_ODDS));
           const cc: Cc = msg.cc === 50 || msg.cc === 150 ? msg.cc : 100;
-          r.gp = { tracks, odds, round: 0, points: new Map(), cc, cpus: msg.cpus === true };
+          const battle = msg.battle === true;
+          // Battle Mode is one arena, people only (no CPUs in the original's battles).
+          r.gp = { tracks: battle ? tracks.slice(0, 1) : tracks, odds, round: 0, points: new Map(), cc, cpus: msg.cpus === true && !battle, battle };
           assignDrivers(r);
           startRace(r);
         }
@@ -163,10 +176,15 @@ wss.on('connection', (ws) => {
         if (r.phase === 'racing' && me.finishMs === null) r.items?.handle(id, msg);
         break;
 
-      case 'hit':
+      case 'hit': {
         if (r.phase !== 'racing') break;
-        if (msg.cpu === undefined) r.items?.handle(id, msg);
-        else if (id === r.cpuHost && r.players.get(msg.cpu)?.info.cpu) r.items?.handle(id, msg);
+        const victim = msg.cpu === undefined ? id : id === r.cpuHost && r.players.get(msg.cpu)?.info.cpu ? msg.cpu : null;
+        if (victim !== null && r.items?.hitEntity(victim, msg.entity)) popBalloon(r, victim);
+        break;
+      }
+
+      case 'pop':
+        if (r.phase === 'racing') popBalloon(r, id);
         break;
 
       case 'cpu':
@@ -178,7 +196,7 @@ wss.on('connection', (ws) => {
         break;
 
       case 'cpuDrop':
-        if (id === r.cpuHost && r.phase === 'racing' && r.players.get(msg.cpu)?.info.cpu) r.items?.cpuDrop(msg.cpu, msg.x, msg.y, msg.a);
+        if (id === r.cpuHost && r.phase === 'racing' && r.players.get(msg.cpu)?.info.cpu) r.items?.cpuDrop(msg.cpu, msg.x, msg.y, msg.a, msg.kind);
         break;
 
       case 'lobby':
@@ -201,6 +219,7 @@ wss.on('connection', (ws) => {
       case 'break': {
         if (r.phase !== 'racing' || !Array.isArray(msg.tiles)) break;
         const tiles = msg.tiles.slice(0, 64).filter((i) => Number.isInteger(i) && i >= 0 && i < 128 * 128);
+        tiles.forEach((t) => r.broken.add(t));
         if (tiles.length) broadcast(r, { t: 'break', tiles }, id);
         break;
       }
@@ -234,6 +253,12 @@ wss.on('connection', (ws) => {
       return;
     }
     if (r.hostId === id) r.hostId = humans(r)[0].id;
+    // The CPUs' browser left mid-race: another player takes them over from where they are.
+    if (r.cpuHost === id && (r.phase === 'countdown' || r.phase === 'racing')) {
+      r.cpuHost = r.hostId;
+      broadcast(r, { t: 'cpuHost', id: r.cpuHost });
+    }
+    if (r.gp?.battle && r.phase === 'racing') checkBattleOver(r);
     broadcastRoom(r);
   });
 });
@@ -275,6 +300,9 @@ function startRace(r: Room) {
   r.finishOrder = [];
   r.firstFinishAt = 0;
   r.grid = ids;
+  r.broken.clear();
+  r.outOrder = [];
+  r.balloons = new Map(gp.battle ? ids.map((id) => [id, BATTLE_BALLOONS]) : []);
   r.phase = 'countdown';
   r.raceStart = Date.now() + COUNTDOWN_MS;
   r.items = new ItemAuthority(odds, (to, msg, except) => {
@@ -294,8 +322,28 @@ function raceMsg(r: Room, startInMs: number): ServerMsg {
   return {
     t: 'race', track: r.track, laps: TOTAL_LAPS, grid: r.grid, startInMs,
     players: racers(r).map((p) => p.info), cpuHost: r.cpuHost,
-    cc: gp.cc, round: gp.round, rounds: gp.tracks.length,
+    cc: gp.cc, round: gp.round, rounds: gp.tracks.length, battle: gp.battle,
   };
+}
+
+/** Battle: one balloon less; at none the player is out; the last one with balloons wins. */
+function popBalloon(r: Room, id: number) {
+  if (!r.gp?.battle) return;
+  const n = r.balloons.get(id);
+  if (!n) return;
+  r.balloons.set(id, n - 1);
+  broadcast(r, { t: 'balloons', id, n: n - 1 });
+  if (n - 1 === 0) {
+    r.outOrder.push(id);
+    const p = r.players.get(id);
+    if (p) { p.finishMs = Date.now() - r.raceStart; p.kart = null; }
+    checkBattleOver(r);
+  }
+}
+
+function checkBattleOver(r: Room) {
+  const alive = racers(r).filter((p) => (r.balloons.get(p.id) ?? 0) > 0);
+  if (alive.length <= 1 && r.phase === 'racing') endRace(r);
 }
 
 /** Connected people (not CPUs), in joining order. */
@@ -330,21 +378,43 @@ function tick(r: Room) {
   const karts = [...r.players.values()].flatMap((p) => (p.kart ? [p.kart] : []));
   broadcast(r, { t: 'states', karts });
 
+  if (r.gp?.battle) {
+    if (r.phase === 'racing' && now - r.raceStart > BATTLE_MAX_MS) endRace(r);
+    return;
+  }
   const allDone = racers(r).every((p) => p.finishMs !== null);
   if (r.phase === 'racing' && r.finishOrder.length > 0 && (allDone || now - r.firstFinishAt > FINISH_GRACE_MS)) {
     endRace(r);
   }
 }
 
+/** Fastest a kart can really move (px per second: boosts, ramps), and slack for network jitter. */
+const MAX_KART_SPEED = 420;
+const MOVE_SLACK = 48;
+
 function updateKart(r: Room, p: Player, k: KartNetState) {
   if (![k.x, k.y, k.a, k.s, k.lap, k.p, k.f, k.h, k.e].every(Number.isFinite)) return;
+  // Out of a battle: no kart any more.
+  if (r.gp?.battle && r.balloons.get(p.id) === 0) return;
+  // Kart physics run in the browsers; the server refuses moves no kart could make (except Lakitu's
+  // rescue, which puts a kart that fell back on the course).
+  const now = Date.now();
+  if (p.kart && p.lastStateAt) {
+    const dt = (now - p.lastStateAt) / 1000;
+    const dist = Math.hypot(k.x - p.kart.x, k.y - p.kart.y);
+    const rescued = p.kart.f > 0 || k.f > 0;
+    // A kart put back on the course by Lakitu (or a CPU taken back to its path) is accepted after a moment.
+    if (!rescued && dist > MAX_KART_SPEED * dt + MOVE_SLACK && (p.rejected = (p.rejected ?? 0) + 1) < 10) return;
+    p.rejected = 0;
+  }
+  p.lastStateAt = now;
   const prevLap = p.kart?.lap ?? 0;
   p.kart = {
     id: p.id,
-    x: clamp(k.x, -64, 1088), y: clamp(k.y, -64, 1088), a: k.a, s: clamp(k.s, -4, 6),
+    x: clamp(k.x, -64, 1088), y: clamp(k.y, -64, 1088), a: k.a, d: Number.isFinite(k.d) ? clamp(k.d!, -1, 1) : 0, s: clamp(k.s, -4, 6),
     // Laps can only move one at a time.
     lap: clamp(Math.round(k.lap), prevLap - 1, prevLap + 1),
-    p: k.p, f: clamp(k.f, 0, 255), h: clamp(k.h, 0, 64), e: k.e & 7,
+    p: k.p, f: clamp(k.f, 0, 255), h: clamp(k.h, 0, 64), e: k.e & 15,
   };
   r.items?.updateKart(p.id, p.kart.lap, p.kart.p);
 }
@@ -357,6 +427,17 @@ function endRace(r: Room) {
   if (r.timer) clearInterval(r.timer);
   r.timer = null;
   r.phase = 'results';
+  if (r.gp?.battle) {
+    // Winner first (most balloons left), then the last ones out; the time is how long each lasted.
+    const elapsed = Date.now() - r.raceStart;
+    const alive = racers(r).filter((p) => (r.balloons.get(p.id) ?? 0) > 0)
+      .sort((a, b) => (r.balloons.get(b.id) ?? 0) - (r.balloons.get(a.id) ?? 0));
+    const out = [...r.outOrder].reverse().flatMap((id) => { const p = r.players.get(id); return p ? [p] : []; });
+    const results: ResultEntry[] = [...alive.map((p) => ({ id: p.id, name: p.info.name, timeMs: elapsed })), ...out.map((p) => ({ id: p.id, name: p.info.name, timeMs: p.finishMs }))];
+    broadcast(r, { t: 'results', results, standings: [], round: 0, rounds: 1, final: true });
+    broadcastRoom(r);
+    return;
+  }
   const finished = r.finishOrder.flatMap((id) => {
     const p = r.players.get(id);
     return p ? [{ id, name: p.info.name, timeMs: p.finishMs }] : [];

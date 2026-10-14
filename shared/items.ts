@@ -9,6 +9,8 @@ import {
 export const ROULETTE_MS = 1000;
 export const BOX_RESPAWN_MS = 10_000;
 export const MAX_COINS = 10;
+/** Every Grand Prix race starts with 5 coins (measured: 50cc top speed 823 = 783 + 5 coins x 8). */
+export const START_COINS = 5;
 
 /** Mario Circuit 1's odds; used if the host didn't send the track's own. */
 export const DEFAULT_ODDS: ItemOdds = {
@@ -46,7 +48,7 @@ export class ItemAuthority {
   ) {}
 
   addPlayer(id: number) {
-    this.players.set(id, { item: null, rollingUntil: 0, rolled: null, coins: 0, lap: 0, progress: 0 });
+    this.players.set(id, { item: null, rollingUntil: 0, rolled: null, coins: START_COINS, lap: 0, progress: 0 });
   }
 
   removePlayer(id: number) {
@@ -68,7 +70,7 @@ export class ItemAuthority {
       case 'box': this.onBox(id, p, msg.tiles); return true;
       case 'coin': this.onCoin(id, p, msg.tiles); return true;
       case 'use': this.onUse(id, p, msg); return true;
-      case 'hit': this.onHit(id, p, msg.entity); return true;
+      case 'hit': this.hitEntity(id, msg.entity); return true;
       default: return false;
     }
   }
@@ -182,23 +184,27 @@ export class ItemAuthority {
   }
 
   /** A CPU drops a banana behind it (CPUs don't use item boxes). */
-  cpuDrop(cpu: number, x: number, y: number, a: number) {
+  cpuDrop(cpu: number, x: number, y: number, a: number, kind: EntityKind = 'banana') {
     if (!this.players.has(cpu) || ![x, y, a].every(Number.isFinite)) return;
+    if (!CPU_DROPS.includes(kind)) return;
     const e: NetEntity = {
-      id: this.nextEntity++, kind: 'banana', owner: cpu,
+      id: this.nextEntity++, kind, owner: cpu,
       x: x - Math.sin(a) * 14, y: y + Math.cos(a) * 14, a, frame: this.frame(), target: null,
     };
     this.entities.set(e.id, e);
     this.send('all', { t: 'spawn', e });
   }
 
-  private onHit(id: number, p: PlayerItems, entity: number) {
-    if (!this.entities.delete(entity)) return;
+  /** A player (or CPU) reports being hit by an entity; false if it was already gone. */
+  hitEntity(id: number, entity: number): boolean {
+    const p = this.players.get(id);
+    if (!p || !this.entities.delete(entity)) return false;
     this.send('all', { t: 'despawn', id: entity, victim: id });
     if (p.coins > 0) {
       p.coins = Math.max(0, p.coins - 2);
       this.send(id, { t: 'coins', coins: p.coins });
     }
+    return true;
   }
 
   private ranked(): number[] {
@@ -233,6 +239,8 @@ function cleanTiles(tiles: unknown, max: number): number[] {
   if (!Array.isArray(tiles)) return [];
   return tiles.slice(0, max).filter((t): t is number => Number.isInteger(t) && t >= 0 && t < 128 * 128);
 }
+
+const CPU_DROPS: EntityKind[] = ['banana', 'greenShell', 'poison', 'fireball', 'egg'];
 
 export function validOdds(o: unknown): o is ItemOdds {
   const ok = (w: unknown) => Array.isArray(w) && w.length === 9 && w.every((n) => Number.isInteger(n) && n >= 0 && n <= 32);

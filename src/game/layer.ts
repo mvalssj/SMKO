@@ -80,6 +80,18 @@ export class Layer {
     return ((d[at + y * 2] >> bit) & 1) | (((d[at + y * 2 + 1] >> bit) & 1) << 1);
   }
 
+  /** A 2bpp tile of the menu font (index 0 transparent); `cols` draws only the first columns. */
+  fontTile(font: Uint8Array, t: number, x0: number, y0: number, colors: Rgb[], cols = 8) {
+    const at = t * 16;
+    for (let y = 0; y < 8; y++) {
+      const b0 = font[at + y * 2], b1 = font[at + y * 2 + 1];
+      for (let x = 0; x < cols; x++) {
+        const ci = ((b0 >> (7 - x)) & 1) | (((b1 >> (7 - x)) & 1) << 1);
+        if (ci) this.put(x0 + x, y0 + y, colors[ci]);
+      }
+    }
+  }
+
   /** One 2bpp HUD tile with its own 4 colors (index 0 transparent). */
   hudTile(t: number, x0: number, y0: number, colors: Rgb[], flipX = false, flipY = false) {
     const at = t * 16, d = this.hud;
@@ -108,12 +120,13 @@ export class Layer {
   }
 
   /** A frame resampled (nearest neighbour) to w x h: track objects and items, which the game scales. */
-  scaled(f: SpriteFrame, x0: number, y0: number, w: number, h: number) {
+  scaled(f: SpriteFrame, x0: number, y0: number, w: number, h: number, mirror = false) {
     if (w < 1 || h < 1) return;
     for (let y = 0; y < h; y++) {
       const sy = Math.min(f.h - 1, Math.floor((y * f.h) / h));
       for (let x = 0; x < w; x++) {
-        const sx = Math.min(f.w - 1, Math.floor((x * f.w) / w));
+        const fx = Math.min(f.w - 1, Math.floor((x * f.w) / w));
+        const sx = mirror ? f.w - 1 - fx : fx;
         const q = (sy * f.w + sx) * 4;
         if (f.pixels[q + 3]) this.put(x0 + x, y0 + y, [f.pixels[q], f.pixels[q + 1], f.pixels[q + 2]]);
       }

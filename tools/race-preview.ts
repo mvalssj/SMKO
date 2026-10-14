@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { CHARACTERS, MAP_PX, BG_BACK_W, BG_FRONT_W, BG_HEIGHT, SmkRom } from '../src/rom/rom';
 import { loadRaceGfx } from '../src/rom/race-gfx';
-import { createKart, kartHeight, raceGeometry, stepKart } from '../src/game/physics';
+import { createKart, isBoosting, kartFacing, kartHeight, raceGeometry, stepKart, terrainAt } from '../src/game/physics';
 import { objectState } from '../src/game/objects';
 import { Layer } from '../src/game/layer';
 import { HORIZON, MAP_BOTTOM, MAP_TOP, RaceHud, SKY_TOP, VIEW_BOTTOM } from '../src/game/hud';
@@ -16,7 +16,9 @@ import { savePng } from './ppu-check';
 
 const rom = new SmkRom(new Uint8Array(readFileSync(process.argv[2])));
 const out = process.argv[3];
-const info = rom.tracks.filter((t) => !t.battle)[Number(process.argv[4] ?? 0)];
+// BATTLE=1: the battle courses instead (balloons over the kart).
+const battle = process.env.BATTLE === '1';
+const info = rom.tracks.filter((t) => t.battle === battle)[Number(process.argv[4] ?? 0)];
 const every = Number(process.argv[5] ?? 4) * 60;
 const track = rom.loadTrack(info);
 const geo = raceGeometry(track);
@@ -69,8 +71,11 @@ function render(frame: number, name: string) {
     const st = objectState(o.kind, i, frame);
     return st.visible ? [{ x: o.x, y: o.y, lift: st.height, frame: Math.floor(frame / 8) % Math.max(1, track.objectFrames.length) }] : [];
   });
-  drawRaceView(layer, cam, [{ x: kart.x, y: kart.y, angle: kart.angle, character: 0, lift: kartHeight(kart) }], objects,
-    { drivers, objectFrames: track.objectFrames, itemFrames: [] }, frame);
+  drawRaceView(layer, cam, [{
+    x: kart.x, y: kart.y, angle: kartFacing(kart), character: 0, lift: kartHeight(kart),
+    smoke: Math.abs(kart.slide) > 0.3 && kart.speed > 2, dust: kart.speed > 1 && terrainAt(track, kart.x, kart.y) === 'slow', boost: isBoosting(kart), balloons: battle ? 3 : 0,
+  }], objects,
+    { drivers, objectFrames: track.objectFrames, objectSizes: track.objectSizes, itemFrames: [] }, frame);
   layer.setClip(MAP_TOP, MAP_BOTTOM);
   const p = mapPoint(kart.x, kart.y);
   if (p) hud.head(0, p.x, p.y, CHARACTERS[0].palette - 8);

@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SMKO</title>
+  <link rel="icon" href="data:," />
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
@@ -28,7 +29,7 @@
           <summary>Controles</summary>
           <p>Menus: setas movem · X / Espaço / Enter confirma · Z / Esc volta · no código da sala, digite as letras.<br />
           Corrida: ↑ / W / X / Espaço acelera · ↓ / S / Z freia · ← → vira · Shift derrapa · E / Q / Ctrl usa o item
-          (segure freio para jogar o casco para trás). Controle (gamepad) também funciona.</p>
+          (segure freio para jogar o casco para trás). M liga/desliga o som. Controle (gamepad) também funciona.</p>
         </details>
       </div>
     </section>
@@ -37,15 +38,15 @@
       <div id="viewport">
         <canvas id="floor"></canvas>
         <canvas id="overlay"></canvas>
+        <!-- The big place number: a color added to the picture (blended with plus-lighter), like the SNES color math. -->
+        <canvas id="place-fx"></canvas>
+        <!-- RESULTS / STANDINGS boards between races, drawn from the ROM. -->
+        <canvas id="board" hidden></canvas>
         <!-- Timer, Lakitu, coins, place and the course map are drawn in the picture, like the original. -->
         <div id="hud-note"></div>
         <div id="results" hidden>
-          <h2 id="results-title">Resultado</h2>
-          <ol id="results-list"></ol>
-          <h3 id="standings-title" hidden>Classificação</h3>
-          <ol id="standings-list"></ol>
+          <span id="results-hint" class="status"></span>
           <button id="btn-continue">Continuar</button>
-          <p id="results-hint" class="status"></p>
         </div>
       </div>
     </section>

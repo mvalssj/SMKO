@@ -6,8 +6,8 @@
 // layer (no smooth scaling: each driver uses the hand-drawn size closest to its distance, like the SNES).
 
 import { BG_BACK_W, BG_FRONT_W, BG_HEIGHT, MAP_PX, type DriverSprites, type SpriteFrame, type Track } from '../rom/rom';
-import type { RaceGfx } from '../rom/race-gfx';
-import { HORIZON, MAP_BOTTOM, MAP_TOP, RaceHud, SKY_TOP, VIEW_BOTTOM } from './hud';
+import { BALLOON_TILES, PLACE_FIRST, PLACE_LINES, PLACE_STRIDE, PLACE_TOP, type RaceGfx } from '../rom/race-gfx';
+import { HORIZON, MAP_BOTTOM, MAP_TOP, RaceHud, SKY_TOP, VIEW_BOTTOM, type PlaceShow } from './hud';
 import { Layer } from './layer';
 
 export const SCREEN_W = 256;
@@ -38,6 +38,8 @@ export interface ObjectSprite {
   lift: number;
   /** Bananas and shells: drawn at half the size of a track object. */
   item?: boolean;
+  /** Drawn mirrored (a shell spinning). */
+  mirror?: boolean;
 }
 
 export interface Sprite {
@@ -55,7 +57,28 @@ export interface Sprite {
   alpha?: number;
   /** Star: flashing. */
   flash?: boolean;
+  /** Tire smoke (skid / power slide), dirt kicked up off-road, boost sparks. */
+  smoke?: boolean;
+  dust?: boolean;
+  boost?: boolean;
+  /** Battle Mode: balloons left, floating over the driver, and their sprite palette. */
+  balloons?: number;
+  balloonPalette?: number;
 }
+
+/** Balloon sizes (px) and their first tile: 2x2 sprites down to 9 px, then single tiles. */
+const BALLOON_SIZES: [number, number, boolean][] = [
+  [16, BALLOON_TILES, true], [14, BALLOON_TILES + 2, true], [12, BALLOON_TILES + 4, true], [10, BALLOON_TILES + 6, true],
+  [9, BALLOON_TILES + 8, true], [7, BALLOON_TILES + 10, false], [5, BALLOON_TILES + 11, false], [3, BALLOON_TILES + 12, false],
+];
+
+/** Effect sprites (16x16, tiles 00-3F of the race's sprite VRAM) and the palettes the game draws them in. */
+const FX_SMOKE = [0x20, 0x22];
+const FX_DUST = [0x00, 0x02, 0x04, 0x06];
+const FX_SPARK = [0x2e, 0x0e];
+const PAL_SMOKE = 7;
+const PAL_DUST = 6;
+const PAL_SPARK = 6;
 
 /** A driver on the course map. */
 export interface MapMarker {
@@ -141,17 +164,24 @@ export class Renderer {
   private uniforms: Record<string, WebGLUniformLocation | null> = {};
   private overlay: CanvasRenderingContext2D;
   private image: ImageData;
+  /** The place number: drawn on a canvas that the page blends additively (CSS plus-lighter) over the picture. */
+  private placeFx: CanvasRenderingContext2D | null;
+  private placeImage: ImageData;
   private sky: number[] = [0, 0, 0];
   private drivers = new Map<number, DriverFrames>();
   private objectFrames: SpriteFrame[] = [];
+  private objectSizes: SpriteFrame[][] = [];
   private itemFrames: SpriteFrame[] = [];
   private tick = 0;
   layer: Layer | null = null;
   hud: RaceHud | null = null;
 
-  constructor(floorCanvas: HTMLCanvasElement, overlayCanvas: HTMLCanvasElement, private gfx: RaceGfx | null) {
+  constructor(floorCanvas: HTMLCanvasElement, overlayCanvas: HTMLCanvasElement, private gfx: RaceGfx | null, placeCanvas?: HTMLCanvasElement) {
     floorCanvas.width = overlayCanvas.width = SCREEN_W;
     floorCanvas.height = overlayCanvas.height = SCREEN_H;
+    if (placeCanvas) { placeCanvas.width = SCREEN_W; placeCanvas.height = SCREEN_H; }
+    this.placeFx = placeCanvas?.getContext('2d') ?? null;
+    this.placeImage = new ImageData(SCREEN_W, SCREEN_H);
 
     const gl = floorCanvas.getContext('webgl', { antialias: false });
     if (!gl) throw new Error('WebGL não está disponível neste navegador.');
@@ -187,6 +217,7 @@ export class Renderer {
     this.sky = track.backColor.map((v) => v / 255);
 
     this.objectFrames = track.objectFrames;
+    this.objectSizes = track.objectSizes;
     this.drivers.clear();
     for (const [character, sprites] of drivers) {
       if (sprites) this.drivers.set(character, withRowHeights(sprites));
@@ -194,7 +225,7 @@ export class Renderer {
     // Sprites and HUD use the track's palettes, as on the SNES.
     if (this.gfx) {
       this.layer = new Layer(this.gfx.obj, this.gfx.hud, track.colors);
-      this.hud = new RaceHud(this.layer);
+      this.hud = new RaceHud(this.layer, this.gfx);
     }
   }
 
@@ -239,16 +270,26 @@ export class Renderer {
     this.tick++;
     layer.clear();
     layer.setClip(HORIZON, VIEW_BOTTOM);
-    drawRaceView(layer, cam, sprites, objects, { drivers: this.drivers, objectFrames: this.objectFrames, itemFrames: this.itemFrames }, this.tick);
+    drawRaceView(layer, cam, sprites, objects, { drivers: this.drivers, objectFrames: this.objectFrames, objectSizes: this.objectSizes, itemFrames: this.itemFrames }, this.tick);
     layer.setClip(MAP_TOP, MAP_BOTTOM);
     for (const m of markers) {
       const p = mapPoint(m.x, m.y);
       if (p) this.hud!.head(m.character, p.x, p.y, m.palette);
     }
     layer.setClip();
+    this.hud!.placeShow = null;
     hud(this.hud!);
     this.image.data.set(layer.px);
     this.overlay.putImageData(this.image, 0, 0);
+    if (this.placeFx && this.gfx) {
+      this.placeImage.data.fill(0);
+      const p = this.hud!.placeShow as PlaceShow | null;
+      if (p) placeMask(this.gfx.place, p.n, (x, y) => {
+        const q = (y * SCREEN_W + x) * 4;
+        this.placeImage.data.set([p.add[0], p.add[1], p.add[2], 255], q);
+      });
+      this.placeFx.putImageData(this.placeImage, 0, 0);
+    }
   }
 
 }
@@ -256,6 +297,8 @@ export class Renderer {
 export interface SpriteSet {
   drivers: Map<number, DriverFrames>;
   objectFrames: SpriteFrame[];
+  /** Hand-drawn smaller sizes of the track object (largest first), per palette. */
+  objectSizes?: SpriteFrame[][];
   itemFrames: SpriteFrame[];
 }
 
@@ -286,7 +329,15 @@ export function drawRaceView(layer: Layer, cam: Camera, sprites: Sprite[], objec
       // 16x16 frames: objects are drawn 32px at the chase distance (like the karts), items 16px.
       const size = Math.round((o.item ? 16 : 32) * (CHASE_DISTANCE / item.z));
       if (size < 1) continue;
-      layer.scaled(img, Math.round(sx - size / 2), Math.round(ground - o.lift * k - size), size, size);
+      // Further away the game switches to the object's smaller hand-drawn sizes, drawn 1:1.
+      const sizes = !o.item ? set.objectSizes?.[Math.min(o.frame, (set.objectSizes?.length ?? 1) - 1)] : undefined;
+      if (sizes?.length && size <= 16) {
+        let best = sizes[0];
+        for (const f of sizes) if (Math.abs(f.h - size) < Math.abs(best.h - size)) best = f;
+        layer.frame(best, Math.round(sx - best.w / 2), Math.round(ground - o.lift * k - best.h));
+        continue;
+      }
+      layer.scaled(img, Math.round(sx - size / 2), Math.round(ground - o.lift * k - size), size, size, o.mirror);
       continue;
     }
     const { s, dx, dy } = item;
@@ -306,7 +357,60 @@ export function drawRaceView(layer: Layer, cam: Camera, sprites: Sprite[], objec
     const f = driver.frames[row][slot];
     // Frames face right; mirrored for karts turned to the left.
     const flash = !!s.flash && (tick >> 2) % 2 === 0;
-    layer.frame(f, Math.round(sx - f.w / 2), Math.round(ground - (s.lift ?? 0) * k - f.h), rel < 0, s.alpha ?? 1, flash);
+    const x0 = Math.round(sx - f.w / 2), y0 = Math.round(ground - (s.lift ?? 0) * k - f.h);
+    layer.frame(f, x0, y0, rel < 0, s.alpha ?? 1, flash);
+    // Effects only on the two nearest sizes, where the game draws them too.
+    if (row <= 1 && !s.lift) drawKartFx(layer, s, x0, y0 + f.h, f.w, tick);
+    if (s.balloons) drawBalloons(layer, s.balloons, s.balloonPalette ?? 0, x0 + f.w / 2, y0, f.h);
+  }
+}
+
+/** Battle balloons over a driver: the size closest to a third of the kart's height, side by side. */
+export function drawBalloons(layer: Layer, n: number, palette: number, cx: number, top: number, kartHeight: number) {
+  const want = Math.max(3, Math.min(16, kartHeight / 2));
+  let best = BALLOON_SIZES[0];
+  for (const b of BALLOON_SIZES) if (Math.abs(b[0] - want) < Math.abs(best[0] - want)) best = b;
+  const [size, tile, big] = best;
+  const gap = Math.max(1, Math.round(size * 0.75));
+  for (let i = 0; i < n; i++) {
+    const x = Math.round(cx - ((n - 1) * gap) / 2 + i * gap - (big ? 8 : 4));
+    const y = Math.round(top - size - 1 - (i % 2) * Math.round(size / 4));
+    layer.sprite(tile, x, y, palette, big);
+  }
+}
+
+/** Smoke, dirt and sparks at the rear wheels of a nearby kart (bottom-left corner at x0, yBottom). */
+function drawKartFx(layer: Layer, s: Sprite, x0: number, yBottom: number, w: number, tick: number) {
+  const phase = tick >> 2;
+  const y = yBottom - 14;
+  if (s.smoke) {
+    const t = FX_SMOKE[phase % 2];
+    layer.sprite(t, x0 - 8, y, PAL_SMOKE, true);
+    layer.sprite(t, x0 + w - 8, y, PAL_SMOKE, true, true);
+  }
+  if (s.dust) {
+    const t = FX_DUST[phase % 4];
+    layer.sprite(t, x0 - 6, y - 2, PAL_DUST, true);
+    layer.sprite(t, x0 + w - 10, y - 2, PAL_DUST, true, true);
+  }
+  if (s.boost) {
+    const t = FX_SPARK[phase % 2];
+    layer.sprite(t, x0 + w / 2 - 8, yBottom - 10, PAL_SPARK, true, phase % 4 >= 2);
+  }
+}
+
+/**
+ * Pixels of the big place number `n` (1-8): the game's window table, window 1 XOR window 2 on each line.
+ */
+export function placeMask(table: Uint8Array, n: number, put: (x: number, y: number) => void) {
+  const first = PLACE_FIRST + (n - 1) * PLACE_STRIDE;
+  for (let i = 0; i < PLACE_LINES; i++) {
+    const at = (first + i) * 4;
+    if (at + 3 >= table.length) break;
+    const [a, b, c, d] = [table[at], table[at + 1], table[at + 2], table[at + 3]];
+    for (let x = Math.min(a, c); x <= Math.max(b, d); x++) {
+      if ((x >= a && x <= b) !== (x >= c && x <= d)) put(x, PLACE_TOP + i);
+    }
   }
 }
 

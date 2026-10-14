@@ -172,6 +172,22 @@ como reserva:
 - 0x91FA: endereço de cada quadro dentro da folha
 - Paletas de sprite 8–11 do tema: Bowser/Yoshi 8, Mario/Toad 9, Luigi/Koopa 10, Peach/DK Jr. 11
 
+## Física, som, resultados e Battle Mode (medidos no jogo original)
+
+- **Física por personagem**: velocidade ($10EA), direção ($102A), derrapagem ($10AA) e mini-turbo ($10CA)
+  medidos quadro a quadro no snes9x para as 4 classes (Mario/Luigi, Bowser/DK, Peach/Yoshi, Koopa/Toad):
+  aceleração, velocidade máxima por cilindrada, fora da pista, moedas (+8 cada), freio, virada, power slide,
+  hop (17 quadros), mini-turbo e largada turbo (janela de 8 quadros ao acender a 1ª luz). 1 unidade = 1/256 px/quadro.
+- **Som**: o driver de som do próprio jogo (código SPC700 e amostras da ROM, lista de envio em $82:8000; músicas
+  por tema carregadas em $D000) roda num emulador de SPC700 + DSP escrito aqui (`src/audio`), num AudioWorklet.
+  Portas: 0 = música, 1 = efeitos, 2/3 = motor. Tecla M liga/desliga.
+- **Chegada e resultados**: número grande da posição (tabela de janelas HDMA, bloco 0x5E760, soma de cor), lista de
+  chegada, quadro LAP TIME, telas RESULTS/STANDINGS remontadas da ROM, cerimônia de pódio (aproximada) e vidas no GP solo.
+- **Battle Mode online**: 3 balões por jogador (gráficos da ROM); o servidor estoura e decide o vencedor.
+- **Progresso local**: Special Cup e 150cc liberados com ouros em 100cc; recordes do Time Trial.
+- **Online**: o servidor recusa movimentos impossíveis, outro jogador assume as CPUs se o anfitrião sair e quem
+  entra no meio recebe os blocos quebrados.
+
 ## Aviso legal
 
 Super Mario Kart é marca e propriedade da Nintendo. Este projeto não distribui ROM nem assets; use apenas um dump

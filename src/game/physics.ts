@@ -1,5 +1,7 @@
-// Arcade kart physics on the SMK tile genre map. Runs at a fixed 60 Hz like the original.
-// Constants are hand-tuned approximations; Phase 4 replaces them with values recovered from the ROM.
+// Kart physics on the SMK tile genre map, at a fixed 60 Hz like the original.
+// Speeds, acceleration tables, turning, hop, mini-turbo and the start boost were measured frame by frame
+// in the original game (kart RAM: speed $10EA, heading $102A, slide $10AA, mini-turbo $10CA), per
+// character class. The game's speed unit is 1/256 px per frame; here speeds are in px per frame.
 
 import { Genre, MAP_PX, MAP_SIZE, TILE, aiAreaContains, type Track } from '../rom/rom';
 import { OBJECT_HIT_DISTANCE, objectState } from './objects';
@@ -11,9 +13,74 @@ export interface Input {
   brake: boolean;
   left: boolean;
   right: boolean;
+  /** L / R: hop, and power slide while held in a turn. */
   drift: boolean;
   item?: boolean;
 }
+
+/** Game speed units (1/256 px per frame) per px per frame. */
+const U = 256;
+/** Game angle units (65536 per turn) to radians. */
+const ANG = (Math.PI * 2) / 65536;
+
+/**
+ * The four kinds of kart (Mario/Luigi, Bowser/DK, Peach/Yoshi, Koopa/Toad), measured in the original.
+ * accel: speed gained per frame while accelerating, by speed / 64 (game units).
+ */
+export interface KartClass {
+  accel: number[];
+  /** 100cc top speed with no coins, and on dirt / grass / sand. */
+  top: number;
+  offroad: number;
+  /** Turning: rate added per frame and its limit (angle units per frame), normal and power slide. */
+  turnAcc: number;
+  turnMax: number;
+  slideAcc: number;
+  slideMax: number;
+  /** How far the kart body swings out in a fast turn and in a power slide (angle units). */
+  skid: number;
+  driftSkid: number;
+  /** Kart-to-kart bumps: heavier karts push lighter ones. */
+  weight: number;
+}
+
+export const KART_CLASSES: KartClass[] = [
+  { // Mario, Luigi
+    accel: [2, 6, 4, 8, 12, 12, 12, 8, 8, 4, 2, 1.5, 1, 0.5, 0.5, 0.5],
+    top: 911, offroad: 580, turnAcc: 13, turnMax: 306, slideAcc: 17, slideMax: 352, skid: 8640, driftSkid: 10240, weight: 2,
+  },
+  { // Bowser, DK Jr.
+    accel: [2, 2, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 1, 0.5, 0.5, 0.5],
+    top: 943, offroad: 610, turnAcc: 11, turnMax: 288, slideAcc: 15, slideMax: 344, skid: 8352, driftSkid: 10752, weight: 3,
+  },
+  { // Peach, Yoshi
+    accel: [4, 12, 16, 16, 12, 12, 12, 8, 8, 4, 4, 2, 0.5, 0.25, 0.25, 0.25],
+    top: 878, offroad: 620, turnAcc: 11, turnMax: 306, slideAcc: 14, slideMax: 352, skid: 8352, driftSkid: 10752, weight: 1,
+  },
+  { // Koopa, Toad
+    accel: [4, 4, 6, 8, 8, 12, 12, 8, 8, 4, 2, 1.5, 1, 0.64, 0.5, 0.5],
+    top: 863, offroad: 635, turnAcc: 14, turnMax: 288, slideAcc: 18, slideMax: 344, skid: 4608, driftSkid: 10240, weight: 1,
+  },
+];
+
+/** Class of each driver, in the game's character order (Mario, Luigi, Bowser, Peach, DK Jr., Koopa, Toad, Yoshi). */
+export const CHARACTER_CLASS = [0, 0, 1, 2, 1, 3, 3, 2];
+
+/** Top speed change per engine class (50cc measured; 150cc continues the same step). */
+export const CC_TOP: Record<50 | 100 | 150, number> = { 50: -128, 100: 0, 150: 128 };
+/** Each coin adds this much top speed (not off-road). */
+const COIN_TOP = 8;
+/** Start boost: accelerate pressed in this window (frames before the green light) shoots the kart off. */
+export const START_BOOST_WINDOW = [-129, -122];
+const START_BOOST_SPEED = 1200;
+/** Mini-turbo: charge needed, frames going straight before it fires, its length and push. */
+const MT_CHARGE = 128;
+const MT_DELAY = 48;
+const MT_FRAMES = 46;
+const MT_ACCEL = 2.25;
+const HOP_FRAMES = 17;
+/** Speed above which a held turn makes the kart body swing out (skid). */
+const SKID_SPEED = 600;
 
 export const NO_INPUT: Input = { accel: false, brake: false, left: false, right: false, drift: false, item: false };
 
@@ -37,6 +104,26 @@ export interface Kart {
   coins: number;
   /** Top speed multiplier (CPU skill / rubber banding); 1 for players. */
   speedScale: number;
+  /** Index into KART_CLASSES, and the engine class' top speed change (game units). */
+  cls: number;
+  ccTop: number;
+  /** Heading change this frame (game angle units, signed) and the kart body's swing out of it (radians). */
+  turnRate: number;
+  slide: number;
+  /** Frames into a turn held at speed (the skid starts after a few). */
+  turnFrames: number;
+  /** Hop (L / R) frames left; whether L / R was down last frame. */
+  hop: number;
+  driftHeld: boolean;
+  /** Mini-turbo: charge, armed (fires once straight), frames straight, frames of push left. */
+  mtCharge: number;
+  mtArmed: boolean;
+  mtStraight: number;
+  mtBoost: number;
+  /** Countdown: race frame accelerate was pressed (null = not held); then start boost / bad start frames left. */
+  startPress: number | null;
+  startBoost: boolean;
+  badStart: number;
   safe: { x: number; y: number; angle: number };
   safeTimer: number;
   lap: number; // 0 before crossing the start line
@@ -47,13 +134,7 @@ export interface Kart {
 
 type Terrain = 'road' | 'slow' | 'wall' | 'fall' | 'boost' | 'oil' | 'ice' | 'jump' | 'bump';
 
-const MAX_SPEED = 2.6;
-const SLOW_MAX = 1.1;
 const REVERSE_MAX = -0.8;
-const ACCEL = 0.035;
-const BRAKE = 0.09;
-const COAST = 0.985;
-const TURN = 0.04;
 const FALL_FRAMES = 70;
 const KART_RADIUS = 5;
 
@@ -105,15 +186,19 @@ export function gridPosition(track: Track, slot: number): { x: number; y: number
   if (track.start) {
     return { x: track.start.x + (slot % 2) * track.start.secondRowOffset, y: track.start.y + slot * 24, angle: 0 };
   }
-  // Battle courses have no GP grid: spread karts around the AI path.
-  const p = track.path[Math.floor((slot * track.path.length) / 8) % track.path.length];
-  return { x: p.x, y: p.y, angle: 0 };
+  // Battle courses have no GP grid: spread karts around the AI path, each facing along it.
+  const n = track.path.length;
+  const i = Math.floor((slot * n) / 8) % n;
+  const p = track.path[i], q = track.path[(i + 1) % n];
+  return { x: p.x, y: p.y, angle: Math.atan2(q.x - p.x, -(q.y - p.y)) };
 }
 
-export function createKart(track: Track, slot: number): Kart {
+export function createKart(track: Track, slot: number, character = 0, cc: 50 | 100 | 150 = 100): Kart {
   const g = gridPosition(track, slot);
   const kart: Kart = {
     x: g.x, y: g.y, angle: g.angle, vx: 0, vy: 0, speed: 0, boost: 0, spin: 0, fall: 0, air: 0, airTotal: 0, star: 0, ghost: 0, shrink: 0, coins: 0, speedScale: 1,
+    cls: CHARACTER_CLASS[character] ?? 0, ccTop: CC_TOP[cc], turnRate: 0, slide: 0, turnFrames: 0, hop: 0, driftHeld: false,
+    mtCharge: 0, mtArmed: false, mtStraight: 0, mtBoost: 0, startPress: null, startBoost: false, badStart: 0,
     safe: { ...g }, safeTimer: 0, lap: 0, armed: false, pathIndex: 0, progress: 0,
   };
   kart.pathIndex = aiAreaAt(track, kart.x, kart.y);
@@ -164,6 +249,8 @@ export function aiAreaAt(track: Track, x: number, y: number, around?: number): n
 
 export interface StepEvents {
   lapCompleted: boolean;
+  /** Hit a wall at speed (the bump sound). */
+  bump: boolean;
   /** Map tiles destroyed this step (Ghost Valley fences, Vanilla Lake ice blocks). */
   broken: number[];
 }
@@ -219,8 +306,35 @@ export function applyBreak(track: Track, tiles: number[]) {
 }
 
 /** `frame` = frames since the start signal; drives track object animation. */
-export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry, others: { x: number; y: number }[], frame = 0): StepEvents {
-  const events: StepEvents = { lapCompleted: false, broken: [] };
+/** Another kart to bump into; `w` = its class weight. */
+export interface Bumper { x: number; y: number; w?: number }
+
+/**
+ * During the countdown: remembers when accelerate went down. At the green light (frame 0) a press in the
+ * start-boost window shoots the kart off; holding it from earlier bogs the engine down.
+ */
+export function countdownInput(k: Kart, input: Input, frame: number) {
+  if (!input.accel) { k.startPress = null; return; }
+  k.startPress ??= frame;
+  if (frame === -1) {
+    const [from, to] = START_BOOST_WINDOW;
+    if (k.startPress >= from && k.startPress <= to) k.startBoost = true;
+    else if (k.startPress < from) k.badStart = 36;
+  }
+}
+
+/** Mushroom, zipper, mini-turbo or start boost under way (sparks behind the kart). */
+export function isBoosting(k: Pick<Kart, 'boost' | 'mtBoost' | 'startBoost'>): boolean {
+  return k.boost > 0 || k.mtBoost > 0 || k.startBoost;
+}
+
+/** Where the kart body points (heading plus its swing in a skid), for drawing. */
+export function kartFacing(k: Pick<Kart, 'angle' | 'slide'>): number {
+  return k.angle + k.slide;
+}
+
+export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry, others: Bumper[], frame = 0): StepEvents {
+  const events: StepEvents = { lapCompleted: false, bump: false, broken: [] };
 
   if (k.star > 0) k.star--;
   if (k.ghost > 0) k.ghost--;
@@ -239,11 +353,50 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   const airborne = k.air > 0;
   const here = airborne ? 'road' : terrainAt(track, k.x, k.y);
 
-  // Steering. Turning needs some speed, and is mirrored when reversing. Little control in the air.
+  const cls = KART_CLASSES[k.cls] ?? KART_CLASSES[0];
   const steer = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-  const grip = Math.min(1, Math.abs(k.speed) / 0.8) * Math.sign(k.speed || 1);
-  k.angle += steer * TURN * (input.drift ? 1.5 : 1) * grip * (airborne ? 0.3 : 1);
+  const units = k.speed * U;
+
+  // Hop on pressing L / R (on the ground); holding it through a turn is a power slide.
+  const hopPress = input.drift && !k.driftHeld;
+  k.driftHeld = input.drift;
+  if (hopPress && !airborne && k.hop === 0 && k.spin === 0) k.hop = HOP_FRAMES;
+  if (k.hop > 0) k.hop--;
+  const sliding = input.drift && steer !== 0;
+
+  // Steering: the turn rate builds up frame by frame to the class' limit (needs a little speed; mirrored in reverse).
+  const grip = Math.min(1, Math.abs(units) / 64) * Math.sign(k.speed || 1);
+  if (steer !== 0 && k.spin === 0) {
+    const max = sliding ? cls.slideMax : cls.turnMax, acc = sliding ? cls.slideAcc : cls.turnAcc;
+    // Turning the other way first unwinds the current turn quickly.
+    const step = Math.sign(k.turnRate) === -steer ? acc * 3 : acc;
+    k.turnRate += Math.max(-step, Math.min(step, steer * max - k.turnRate));
+    k.turnFrames++;
+  } else {
+    k.turnRate -= Math.sign(k.turnRate) * Math.min(Math.abs(k.turnRate), cls.turnAcc * 3);
+    k.turnFrames = 0;
+  }
+  k.angle += k.turnRate * ANG * grip;
   if (k.spin > 0) { k.spin--; k.angle += 0.35; }
+
+  // The body swings out in a fast turn (more in a power slide) and swings back when straightened.
+  const skidTarget = steer !== 0 && k.spin === 0 && units > SKID_SPEED && (sliding || k.turnFrames > 5)
+    ? steer * (sliding ? cls.driftSkid : cls.skid) * ANG : 0;
+  const swing = (sliding ? 512 : 288) * ANG;
+  k.slide += Math.max(-swing, Math.min(swing, skidTarget - k.slide));
+
+  // Mini-turbo: charge with L / R + direction + accelerate; released at 128+, it fires once the kart runs straight.
+  if (input.drift && steer !== 0 && input.accel && !airborne) {
+    k.mtCharge += k.mtCharge < 20 ? 1 : 2;
+  } else if (k.mtCharge > 0) {
+    if (k.mtCharge >= MT_CHARGE) { k.mtArmed = true; k.mtStraight = 0; }
+    k.mtCharge = 0;
+  }
+  if (k.mtArmed) {
+    if (k.slide === 0 && steer === 0 && !input.drift) k.mtStraight++;
+    if (k.mtStraight >= MT_DELAY) { k.mtArmed = false; k.mtBoost = MT_FRAMES; }
+  }
+  if (k.mtBoost > 0 && (hopPress || k.spin > 0)) k.mtBoost = 0;
 
   if (airborne) {
     // Ballistic: keep the take-off velocity, ignore walls and holes until landing.
@@ -257,20 +410,41 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     return events;
   }
 
-  // Throttle.
-  // A star keeps full speed off-road; being shrunk by lightning slows you down.
-  let top = k.boost > 0 ? MAX_SPEED * 1.5 : here === 'slow' && k.star === 0 ? SLOW_MAX : MAX_SPEED;
-  top *= k.speedScale * (1 + k.coins * 0.01) * (k.star > 0 ? 1.15 : 1) * (k.shrink > 0 ? 0.6 : 1);
-  if (input.accel && k.spin === 0) k.speed += ACCEL * (1 - Math.max(0, k.speed) / (top * 1.15));
-  else if (input.brake) k.speed = Math.max(REVERSE_MAX, k.speed - BRAKE);
-  else k.speed *= COAST;
-  if (k.speed > top) k.speed = Math.max(top, k.speed - 0.06);
-  if (input.drift) k.speed *= 0.997;
-  if (k.boost > 0) { k.boost--; k.speed = Math.max(k.speed, MAX_SPEED * 1.4); }
+  // Throttle, in game units. A hop keeps the surface it started on.
+  const surface = k.hop > 0 && k.hop < HOP_FRAMES - 1 ? 'road' : here;
+  const offroad = surface === 'slow' && k.star === 0;
+  let top = (offroad ? cls.offroad : cls.top + k.ccTop + k.coins * COIN_TOP) * k.speedScale;
+  if (k.star > 0) top *= 1.15;
+  if (k.shrink > 0) top *= 0.6;
+  let v = units;
+  if (k.badStart > 0) {
+    // Accelerate held too early: the engine bogs down for a moment.
+    k.badStart--;
+    if (input.accel) v += 0.78;
+  } else if (k.startBoost) {
+    v += 50;
+    if (v >= START_BOOST_SPEED) { v = START_BOOST_SPEED; k.startBoost = false; }
+  } else if (input.accel && k.spin === 0) {
+    if (v < top) v = Math.min(top, v + cls.accel[Math.max(0, Math.min(15, Math.floor(v / 64)))]);
+  } else if (input.brake) {
+    v = v > 0 ? Math.max(0, v - [3.5, 6.5, 8.5, 11.5][Math.min(3, Math.floor(v / 256))]) : Math.max(REVERSE_MAX * U, v - 2);
+  } else if (v > 0) {
+    v = Math.max(0, v - (3.75 + 2 * Math.min(3, Math.floor(v / 256))));
+  } else {
+    v = Math.min(0, v + 4);
+  }
+  if (k.mtBoost > 0) { k.mtBoost--; v += MT_ACCEL; }
+  // Mushroom and zipper boosts: pushed up to start-boost speed while they last.
+  if (k.boost > 0) { k.boost--; v = Math.min(Math.max(v, top) + 50, top + 289); }
+  // Above top speed (boosts, or onto dirt): slows down faster the bigger the excess.
+  const excess = v - top;
+  if (excess > 0 && k.boost === 0 && k.mtBoost === 0 && !k.startBoost) v -= Math.min(excess, Math.max(2, Math.floor(excess / 64) * 8));
+  k.speed = v / U;
 
-  // Velocity follows the heading; lower grip = more sliding.
-  const traction = here === 'ice' ? 0.04 : input.drift ? 0.09 : 0.22;
-  const fx = Math.sin(k.angle), fy = -Math.cos(k.angle);
+  // Velocity follows the heading; on ice it slides. In a skid the kart drifts a little to the outside.
+  const traction = surface === 'ice' ? 0.04 : 0.5;
+  const dir = k.angle - k.slide * 0.12;
+  const fx = Math.sin(dir), fy = -Math.cos(dir);
   k.vx += (fx * k.speed - k.vx) * traction;
   k.vy += (fy * k.speed - k.vy) * traction;
 
@@ -284,20 +458,24 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     return false;
   };
   const nx = k.x + k.vx;
-  if (blocked(nx + Math.sign(k.vx) * KART_RADIUS, k.y)) { k.vx *= -0.5; k.speed *= 0.6; }
+  const wallHit = () => { if (Math.abs(k.speed) > 0.5) { k.speed *= 0.6; events.bump = true; } };
+  // Hitting a wall knocks speed off; pushing against it at a crawl does not (so the kart can still turn away).
+  if (blocked(nx + Math.sign(k.vx) * KART_RADIUS, k.y)) { k.vx *= -0.5; wallHit(); }
   else k.x = nx;
   const ny = k.y + k.vy;
-  if (blocked(k.x, ny + Math.sign(k.vy) * KART_RADIUS)) { k.vy *= -0.5; k.speed *= 0.6; }
+  if (blocked(k.x, ny + Math.sign(k.vy) * KART_RADIUS)) { k.vy *= -0.5; wallHit(); }
   else k.y = ny;
 
-  // Bump into other karts.
+  // Bump into other karts: the lighter kart takes most of the push (both sides move, each in its own simulation).
   for (const o of others) {
     const dx = k.x - o.x, dy = k.y - o.y;
     const d = Math.hypot(dx, dy);
     if (d > 0 && d < KART_RADIUS * 2) {
-      const push = (KART_RADIUS * 2 - d) / d;
+      const mine = cls.weight, theirs = o.w ?? 2;
+      const share = theirs / (mine + theirs);
+      const push = ((KART_RADIUS * 2 - d) / d) * share * 2;
       if (terrainAt(track, k.x + dx * push, k.y + dy * push) !== 'wall') { k.x += dx * push; k.y += dy * push; }
-      k.speed *= 0.9;
+      k.speed *= 1 - 0.15 * share;
     }
   }
 
@@ -333,6 +511,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     k.boost = k.spin = 0;
   } else if (now === 'boost') {
     k.boost = 45;
+    k.mtBoost = 0;
   } else if (now === 'oil' && k.spin === 0) {
     k.spin = 36;
   } else if (now === 'jump' && k.speed > 0.3) {
@@ -357,7 +536,8 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
 }
 
 /** Height above the floor in world pixels, for drawing jumps. */
-export function kartHeight(k: Pick<Kart, 'air' | 'airTotal'>): number {
+export function kartHeight(k: Pick<Kart, 'air' | 'airTotal'> & { hop?: number }): number {
+  if (k.hop && k.air <= 0) return Math.sin((Math.PI * k.hop) / HOP_FRAMES) * 4;
   if (k.air <= 0 || k.airTotal <= 0) return 0;
   return Math.sin(Math.PI * (1 - k.air / k.airTotal)) * (k.airTotal > 10 ? 14 : 3);
 }
@@ -400,7 +580,8 @@ export function spinOut(k: Kart) {
   if (isInvincible(k) || k.fall > 0) return;
   k.spin = 50;
   k.speed *= 0.2;
-  k.boost = 0;
+  k.boost = k.mtBoost = k.turnRate = 0;
+  k.mtArmed = false;
 }
 
 /** Feather: a big jump that can clear walls. */

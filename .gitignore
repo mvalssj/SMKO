@@ -4,3 +4,4 @@ track-dump/
 # Never commit or publish ROMs
 *.sfc
 *.smc
+.scratch/

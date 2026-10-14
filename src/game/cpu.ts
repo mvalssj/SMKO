@@ -4,9 +4,12 @@
 import type { Track } from '../rom/rom';
 import { aiAreaAt, terrainAt, type Input, type Kart } from './physics';
 
+const NO_START: Input = { accel: false, brake: false, left: false, right: false, drift: false };
+
 export class CpuDriver {
   private area: number;
   private stuck = 0;
+  private stuckFrom = { x: 0, y: 0 };
   private reverse = 0;
   private nextDrop: number;
   private bestProgress = -Infinity;
@@ -22,8 +25,8 @@ export class CpuDriver {
     this.rescueIfLost(k);
     this.area = aiAreaAt(this.track, k.x, k.y, this.area);
     const target = this.track.path[this.area];
-    const want = Math.atan2(target.x - k.x, -(target.y - k.y));
-    let d = want - k.angle;
+    const aim = Math.atan2(target.x - k.x, -(target.y - k.y));
+    let d = aim - k.angle;
     d = Math.atan2(Math.sin(d), Math.cos(d));
 
     // Swerve around static obstacles just ahead, toward whichever side is clear.
@@ -33,7 +36,7 @@ export class CpuDriver {
       const ox = o.x - k.x, oy = o.y - k.y;
       const ahead = ox * fx + oy * fy;
       const side = ox * -fy + oy * fx; // > 0: object to the right
-      if (!(ahead > 0 && ahead < 40 && Math.abs(side) < 12)) continue;
+      if (!(ahead > 0 && ahead < 30 + k.speed * 16 && Math.abs(side) < 13)) continue;
       const clear = (dir: number) => {
         const x = o.x - fy * dir * 18, y = o.y + fx * dir * 18;
         const t = terrainAt(this.track, x, y);
@@ -45,13 +48,23 @@ export class CpuDriver {
       else if (clear(-preferred)) d = -preferred * 0.5;
     }
 
-    this.stuck = Math.abs(k.speed) < 0.4 && k.fall === 0 && k.air === 0 ? this.stuck + 1 : 0;
-    if (this.stuck > 40) { this.reverse = 45; this.stuck = 0; }
+    // Stuck = barely moved in the last second while on the ground (speed alone builds up slowly from a stop).
+    if (k.fall === 0 && k.air === 0 && this.reverse === 0) {
+      this.stuck++;
+      if (Math.hypot(k.x - this.stuckFrom.x, k.y - this.stuckFrom.y) > 12) { this.stuck = 0; this.stuckFrom = { x: k.x, y: k.y }; }
+    } else this.stuckFrom = { x: k.x, y: k.y };
+    if (this.stuck > 60) { this.reverse = 40; this.stuck = 0; }
     if (this.reverse > 0) {
       this.reverse--;
       return { accel: false, brake: true, left: d > 0, right: d <= 0, drift: false };
     }
-    return { accel: true, brake: false, left: d < -0.05, right: d > 0.05, drift: Math.abs(d) > 0.6 };
+    // The turn rate builds up and dies down over several frames: steer toward the rate that closes the
+    // angle gap (game angle units per frame), not just toward the target, so the CPU doesn't weave.
+    const want = Math.max(-352, Math.min(352, d * 1400));
+    const left = k.turnRate > want + 20, right = k.turnRate < want - 20;
+    // Sharp bend at speed: lift off and power slide through it.
+    const sharp = Math.abs(d) > 0.9;
+    return { accel: !(sharp && k.speed > 2.4), brake: false, left, right, drift: Math.abs(d) > 0.5 && (left || right) };
   }
 
   /**
@@ -77,7 +90,17 @@ export class CpuDriver {
     k.safe = { x: k.x, y: k.y, angle: k.angle };
   }
 
-  /** True when the CPU wants to drop a banana this frame (every 10-25 s). */
+  /**
+   * Countdown: CPUs press accelerate in the start-boost window about half the time, like a good player
+   * (the original's CPUs shoot off the line too).
+   */
+  startInput(frame: number): Input {
+    this.startAt ??= this.random() < 0.5 ? -126 : -60;
+    return { ...NO_START, accel: frame >= this.startAt };
+  }
+  private startAt: number | null = null;
+
+  /** True when the CPU wants to use its special item this frame (every 10-25 s). */
   wantsDrop(): boolean {
     if (--this.nextDrop > 0) return false;
     this.nextDrop = 600 + Math.floor(this.random() * 900);

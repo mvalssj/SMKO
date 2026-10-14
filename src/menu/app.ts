@@ -5,11 +5,14 @@ import { CHARACTER_NAMES } from '../../shared/protocol';
 import { CUP_NAMES, type SmkRom, type SpriteFrame, type TrackInfo } from '../rom/rom';
 import { createOam, renderFrame, SCREEN_H, SCREEN_W, setSprite, type Screen } from '../snes/ppu';
 import { MenuAssets } from './assets';
+import { cc150Open, specialCupOpen, trialRecord } from './progress';
+import { boardTime } from './results';
 import {
   TV_CHARACTERS, TV_SPRITE_POS, bigSpriteText, buildCupMap, cupBorder, cupTitle, okPrompt, spriteText, tvChosen, tvMarker,
 } from './draw';
 
-export type Mode = 'gp' | 'tt';
+/** gp / tt: 1P GAME; gp / match / battle: the online room (the original's 2P GAME modes). */
+export type Mode = 'gp' | 'tt' | 'match' | 'battle';
 export type Cc = 50 | 100 | 150;
 
 export interface MenuEvents {
@@ -48,6 +51,8 @@ type State =
   | { s: 'message'; lines: string[]; onB?: () => void; onBack?: () => void; roomStatus?: boolean };
 
 const BOX = { x0: 64, x1: 188 };
+/** The battle courses take the place of a cup in the course list. */
+const BATTLE_CUP = 4;
 const KEYS: Record<string, string> = {
   ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
   KeyX: 'b', Space: 'b', Enter: 'start', KeyZ: 'y', Escape: 'y', Backspace: 'y', KeyA: 'b', KeyS: 'y',
@@ -137,7 +142,7 @@ export class MenuApp {
     const wasHost = this.lobby?.isHost;
     this.lobby = view;
     // Became the host (the previous one left) while waiting: now this player picks the cup.
-    if (view.isHost && !wasHost && this.state.s === 'message' && this.state.roomStatus) this.state = { s: 'cup', cursor: 0, online: true };
+    if (view.isHost && !wasHost && this.state.s === 'message' && this.state.roomStatus) this.state = this.hostPicks();
   }
 
   /** The server refused the confirmed driver (someone else confirmed it first). */
@@ -214,9 +219,9 @@ export class MenuApp {
         this.pressSelect(st, k);
         break;
       case 'cup':
-        if (k === 'up') st.cursor = (st.cursor + 3) % 4;
-        else if (k === 'down') st.cursor = (st.cursor + 1) % 4;
-        else if (k === 'start' && st.online) this.events.onlineStart({ mode: 'gp', cc: this.cc, tracks: this.cupTracks(st.cursor) });
+        if (k === 'up') st.cursor = (st.cursor + this.cupCount() - 1) % this.cupCount();
+        else if (k === 'down') st.cursor = (st.cursor + 1) % this.cupCount();
+        else if ((k === 'start' || k === 'b') && st.online && this.mode !== 'match') this.events.onlineStart({ mode: 'gp', cc: this.cc, tracks: this.cupTracks(st.cursor) });
         else if (k === 'b' || k === 'start') this.pickCup(st.cursor, st.online);
         else if (k === 'y') {
           if (st.online) this.events.onlineCharacter(this.character, false);
@@ -224,10 +229,10 @@ export class MenuApp {
         }
         break;
       case 'course':
-        if (k === 'up') st.cursor = (st.cursor + 4) % 5;
-        else if (k === 'down') st.cursor = (st.cursor + 1) % 5;
+        if (k === 'up') st.cursor = (st.cursor + this.cupTracks(st.cup).length - 1) % this.cupTracks(st.cup).length;
+        else if (k === 'down') st.cursor = (st.cursor + 1) % this.cupTracks(st.cup).length;
         else if (k === 'b' || k === 'start') this.pickCourse(st.cup, st.cursor, st.online);
-        else if (k === 'y') this.state = { s: 'cup', cursor: st.cup, online: st.online };
+        else if (k === 'y') this.state = st.cup === BATTLE_CUP ? this.reselect(st.online) : { s: 'cup', cursor: st.cup, online: st.online };
         break;
       case 'message':
         if ((k === 'b' || k === 'start') && st.onB) st.onB();
@@ -243,7 +248,7 @@ export class MenuApp {
         this.character = TV_CHARACTERS[st.tv];
         if (st.online) {
           this.events.onlineCharacter(this.character, true);
-          if (this.lobby?.isHost) this.state = { s: 'cup', cursor: 0, online: true };
+          if (this.lobby?.isHost) this.state = this.hostPicks();
           else this.waitForHost();
         } else this.state = { s: 'cup', cursor: 0, online: false };
       } else if (k === 'y') st.ok = false;
@@ -309,12 +314,14 @@ export class MenuApp {
     this.box(['MARIOKART GP', 'TIME TRIAL'], (i) => {
       this.mode = i === 0 ? 'gp' : 'tt';
       // Time Trial has no class choice in the original.
-      if (this.mode === 'tt') { this.cc = 100; this.confirmBox(); } else this.classBox(() => this.confirmBox(), () => this.modeBox());
+      if (this.mode === 'tt') { this.cc = 100; this.confirmBox(); } else this.classBox(() => this.confirmBox(), () => this.modeBox(), true);
     }, () => this.mainBox());
   }
 
-  private classBox(next: () => void, back: () => void) {
-    this.box(['50¢ CLASS', '100¢ CLASS', '150¢ CLASS'], (i) => {
+  /** `solo`: 1P GAME, where 150cc has to be won first (golds in all four cups at 100cc). */
+  private classBox(next: () => void, back: () => void, solo = false) {
+    const lines = ['50¢ CLASS', '100¢ CLASS', '150¢ CLASS'].slice(0, solo && !cc150Open() ? 2 : 3);
+    this.box(lines, (i) => {
       this.cc = ([50, 100, 150] as const)[i];
       next();
     }, back);
@@ -333,12 +340,31 @@ export class MenuApp {
   private onlineBox() {
     this.online = true;
     this.box(['CREATE ROOM', 'JOIN ROOM'], (i) => {
-      if (i === 0) this.classBox(() => this.events.online({ code: null, cc: this.cc }), () => this.onlineBox());
+      if (i === 0) this.roomModeBox();
       else {
         const fromUrl = new URLSearchParams(location.search).get('sala')?.toUpperCase().slice(0, 5) ?? '';
         this.state = { s: 'code', code: fromUrl, pos: Math.min(4, fromUrl.length) };
       }
     }, () => this.mainBox());
+  }
+
+  /** Creating a room: the modes of the original's 2P GAME (Battle Mode has no engine class). */
+  private roomModeBox() {
+    this.box(['MARIOKART GP', 'MATCH RACE', 'BATTLE MODE'], (i) => {
+      this.mode = (['gp', 'match', 'battle'] as const)[i];
+      if (this.mode === 'battle') { this.cc = 100; this.events.online({ code: null, cc: this.cc }); }
+      else this.classBox(() => this.events.online({ code: null, cc: this.cc }), () => this.roomModeBox());
+    }, () => this.onlineBox());
+  }
+
+  /** What the room's host chooses next: a cup (GP, Match Race) or one of the battle courses. */
+  private hostPicks(): State {
+    return this.mode === 'battle' ? { s: 'course', cup: BATTLE_CUP, cursor: 0, online: true } : { s: 'cup', cursor: 0, online: true };
+  }
+
+  private reselect(online: boolean): State {
+    if (online) this.events.onlineCharacter(this.character, false);
+    return { s: 'select', tv: TV_CHARACTERS.indexOf(this.character), ok: false, online };
   }
 
   private pickCup(cup: number, online: boolean) {
@@ -351,11 +377,17 @@ export class MenuApp {
 
   private pickCourse(cup: number, course: number, online: boolean) {
     const track = this.cupTracks(cup)[course];
-    if (online) this.events.onlineStart({ mode: 'tt', cc: this.cc, tracks: [track] });
+    if (online) this.events.onlineStart({ mode: cup === BATTLE_CUP ? 'battle' : 'match', cc: this.cc, tracks: [track] });
     else this.events.solo({ mode: 'tt', cc: this.cc, character: this.character, tracks: [track] });
   }
 
+  /** Cups on the list: the Special Cup is won in 1P GAME (golds in the first three at 100cc); online, all four. */
+  private cupCount(): number {
+    return this.online || specialCupOpen() ? 4 : 3;
+  }
+
   private cupTracks(cup: number): TrackInfo[] {
+    if (cup === BATTLE_CUP) return this.rom.tracks.filter((t) => t.battle).sort((a, b) => a.name.localeCompare(b.name));
     return this.rom.tracks.filter((t) => !t.battle && t.cup === cup);
   }
 
@@ -490,13 +522,21 @@ export class MenuApp {
   private drawCup(st: Extract<State, { s: 'cup' | 'course' }>): Screen {
     const s = this.cup;
     // Lines fit between the icons going round the frame (rows 7-20).
-    if (st.s === 'cup') buildCupMap(s, CUP_NAMES.map((n) => `${n.replace(' Cup', '')} CUP RACE`.toUpperCase()), st.cursor, 8, 3);
+    if (st.s === 'cup') buildCupMap(s, CUP_NAMES.slice(0, this.cupCount()).map((n) => `${n.replace(' Cup', '')} CUP RACE`.toUpperCase()), st.cursor, 8, 3);
     else buildCupMap(s, this.cupTracks(st.cup).map((t) => t.name.toUpperCase()), st.cursor, 7, 3);
     s.oam = createOam();
     let slot = cupBorder(s.oam, 0, this.frame);
     slot = cupTitle(s.oam, slot, this.cc);
-    if (this.online && this.lobby && st.s === 'cup') {
-      slot = bigSpriteText(s.oam, slot, 64, 208, 'B RACE  START GP', 3);
+    // Time Trial: the course's record (best time, best lap) under the list.
+    if (!this.online && this.mode === 'tt' && st.s === 'course') {
+      const track = this.cupTracks(st.cup)[st.cursor];
+      const r = track ? trialRecord(this.rom.tracks.indexOf(track)) : null;
+      const line = r?.times.length ? `BEST ${boardTime(r.times[0])}  LAP ${r.bestLap === null ? '-' : boardTime(r.bestLap)}` : 'NO RECORD';
+      slot = bigSpriteText(s.oam, slot, 128 - line.length * 4, 208, line, 3);
+    }
+    if (this.online && this.lobby && (st.s === 'cup' || st.cup === BATTLE_CUP)) {
+      const hint = this.mode === 'battle' ? 'B BATTLE' : this.mode === 'match' ? 'B CHOOSE COURSE' : 'B START GP';
+      slot = bigSpriteText(s.oam, slot, 128 - hint.length * 4, 208, hint, 3);
       // The host keeps seeing who is in the room and who has chosen a driver.
       bigSpriteText(s.oam, slot, 128 - this.readyLine().length * 4, 0, this.readyLine(), 3);
     }

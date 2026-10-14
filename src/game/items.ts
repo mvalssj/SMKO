@@ -5,6 +5,9 @@ import type { Track } from '../rom/rom';
 import { terrainAt } from './physics';
 
 const SHELL_SPEED = 4.6;
+/** Bowser's fireballs roll slowly and wander, then burn out. */
+const FIREBALL_SPEED = 0.9;
+const FIREBALL_LIFE = 60 * 8;
 const RED_TURN = 0.09;
 const GREEN_LIFE = 60 * 10;
 const RED_LIFE = 60 * 12;
@@ -22,7 +25,7 @@ export interface Entity extends NetEntity {
 }
 
 export function createEntity(e: NetEntity): Entity {
-  const speed = e.kind === 'banana' ? 0 : SHELL_SPEED;
+  const speed = e.kind === 'greenShell' || e.kind === 'redShell' ? SHELL_SPEED : e.kind === 'fireball' ? FIREBALL_SPEED : 0;
   return { ...e, vx: Math.sin(e.a) * speed, vy: -Math.cos(e.a) * speed, at: e.frame, dead: false };
 }
 
@@ -30,9 +33,15 @@ export function createEntity(e: NetEntity): Entity {
 export function advanceEntity(e: Entity, track: Track, frame: number, targetPos: (id: number) => { x: number; y: number } | null) {
   while (!e.dead && e.at < frame) {
     e.at++;
-    if (e.kind === 'banana') return;
+    if (e.kind === 'banana' || e.kind === 'poison' || e.kind === 'egg') return;
     const age = e.at - e.frame;
-    if (age > (e.kind === 'redShell' ? RED_LIFE : GREEN_LIFE)) { e.dead = true; return; }
+    if (age > (e.kind === 'redShell' ? RED_LIFE : e.kind === 'fireball' ? FIREBALL_LIFE : GREEN_LIFE)) { e.dead = true; return; }
+    if (e.kind === 'fireball' && age % 40 === 0) {
+      // Wanders: a new direction every 40 frames, decided by its id and age so every client agrees.
+      const a = e.a + Math.sin(e.id * 12.9898 + age * 0.37) * 1.2;
+      e.vx = Math.sin(a) * FIREBALL_SPEED;
+      e.vy = -Math.cos(a) * FIREBALL_SPEED;
+    }
 
     if (e.kind === 'redShell' && e.target !== null && age > 6) {
       const t = targetPos(e.target);

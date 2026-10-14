@@ -215,6 +215,8 @@ export interface Track {
   objects: TrackObject[];
   /** 16x16 object sprite; two frames on Rainbow Road, where the Thwomps flash. */
   objectFrames: SpriteFrame[];
+  /** The same object drawn smaller (14, 12, 10... px) for the distance, largest first, per palette. */
+  objectSizes: SpriteFrame[][];
   /** AI areas, in driving order. Used for race position and (later) CPU karts. */
   ai: AiArea[];
   /** AI targets in pixels, same order as `ai`. */
@@ -354,8 +356,8 @@ export class SmkRom {
     };
   }
 
-  private loadObjects(info: TrackInfo, theme: number, colors: [number, number, number][]): { objects: TrackObject[]; objectFrames: SpriteFrame[] } {
-    if (info.battle) return { objects: [], objectFrames: [] };
+  private loadObjects(info: TrackInfo, theme: number, colors: [number, number, number][]): { objects: TrackObject[]; objectFrames: SpriteFrame[]; objectSizes: SpriteFrame[][] } {
+    if (info.battle) return { objects: [], objectFrames: [], objectSizes: [] };
     const d = this.data;
     // Object type and palette per theme (the ROM only stores these in code; same table as Epic Edit).
     // Donut Plains 1 is the exception: orange pipes instead of moles.
@@ -367,6 +369,25 @@ export class SmkRom {
     const gfx = decompress(d, this.ptr(this.trackObjectGraphics + gfxSlot * 3));
     // 16x16 frame: 4 tiles of the 16-tile-wide object sheet.
     const tiles = kind === 'plant' || kind === 'fish' ? [4, 5, 20, 21] : [32, 33, 48, 49];
+    /** A frame of `cols` x 2 tiles starting at sheet tile `first` (16 tiles per row), trimmed to what's drawn. */
+    const frameAt = (first: number, cols: number, p: number): SpriteFrame | null => {
+      const w = cols * 8, px = new Uint8Array(w * 16 * 4);
+      for (let n = 0; n < cols * 2; n++) {
+        const t = first + (n >= cols ? 16 : 0) + (n % cols);
+        for (let y = 0; y < 8; y++) {
+          for (let x = 0; x < 8; x++) {
+            const o = t * 32, bit = 7 - x;
+            const ci = ((gfx[o + y * 2] >> bit) & 1) | (((gfx[o + y * 2 + 1] >> bit) & 1) << 1) |
+              (((gfx[o + 16 + y * 2] >> bit) & 1) << 2) | (((gfx[o + 16 + y * 2 + 1] >> bit) & 1) << 3);
+            if (!ci) continue;
+            const c = colors[(8 + p) * 16 + ci];
+            const q = (((n >= cols ? 8 : 0) + y) * w + (n % cols) * 8 + x) * 4;
+            px[q] = c[0]; px[q + 1] = c[1]; px[q + 2] = c[2]; px[q + 3] = 255;
+          }
+        }
+      }
+      return trimFrame({ w, h: 16, pixels: px });
+    };
     const objectFrames = palettes.map((p) => {
       const px = new Uint8Array(16 * 16 * 4);
       tiles.forEach((t, n) => {
@@ -384,6 +405,10 @@ export class SmkRom {
       });
       return { w: 16, h: 16, pixels: px };
     });
+    // Rows 2-3 of the sheet: the object at the sizes the game uses further away (16 px, then smaller).
+    const SIZES: [number, number][] = [...(tiles[0] === 32 ? [] : [[32, 2]] as [number, number][]), [34, 2], [36, 2], [38, 1], [39, 1], [40, 1], [41, 1], [42, 1]];
+    const objectSizes = palettes.map((p) => SIZES.map(([t, cols]) => frameAt(t, cols, p)).filter((f): f is SpriteFrame => !!f && f.h >= 3)
+      .sort((a, b) => b.h - a.h));
 
     // 16 regular objects, 2 bytes each (tile coordinates); unused slots are 0,0.
     const objects: TrackObject[] = [];
@@ -395,7 +420,7 @@ export class SmkRom {
       // Same anchor as Epic Edit: 4px right of the tile corner, on the tile row line.
       objects.push({ kind, x: tx * TILE + TILE / 2, y: ty * TILE });
     }
-    return { objects, objectFrames };
+    return { objects, objectFrames, objectSizes };
   }
 
   private applyOverlays(map: Uint8Array, trackIndex: number) {
@@ -724,6 +749,19 @@ function sheetFrame(gfx: Uint8Array, tiles: number[], colors: [number, number, n
 
 function expand5(v: number): number {
   return (v << 3) | (v >> 2);
+}
+
+/** Crops a frame to its drawn pixels (null if empty). */
+function trimFrame(f: SpriteFrame): SpriteFrame | null {
+  let x0 = f.w, y0 = f.h, x1 = -1, y1 = -1;
+  for (let y = 0; y < f.h; y++) for (let x = 0; x < f.w; x++) {
+    if (!f.pixels[(y * f.w + x) * 4 + 3]) continue;
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+  }
+  if (x1 < 0) return null;
+  const w = x1 - x0 + 1, h = y1 - y0 + 1, px = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) px.set(f.pixels.subarray(((y0 + y) * f.w + x0) * 4, ((y0 + y) * f.w + x1 + 1) * 4), y * w * 4);
+  return { w, h, pixels: px };
 }
 
 export function crc32(bytes: Uint8Array): number {

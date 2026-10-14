@@ -3,6 +3,7 @@
 // Lakitu with the start lights, lap signs, the finish flag, the wrong-way sign and the rescue.
 
 import type { SpriteFrame } from '../rom/rom';
+import type { RaceGfx } from '../rom/race-gfx';
 import type { Layer } from './layer';
 
 type Rgb = readonly [number, number, number];
@@ -34,8 +35,32 @@ export type LakituShow =
   | { kind: 'reverse'; t: number }
   | { kind: 'rescue'; t: number; x: number; y: number };
 
+/** Menu font colors of the lap time list: white, lavender shade, black outline. */
+const FONT_COLORS: Rgb[] = [[0, 0, 0], [248, 252, 248], [168, 168, 224], [0, 0, 0]];
+/** Menu font tiles: digits 0x00-0x09, ' and ", dash, and the pre-drawn "LAP TIME" / "TOTAL" pieces. */
+const F_MINUTE = 0x28;
+const F_SECOND = 0x29;
+const F_DASH = 0x9c;
+const F_RULE = 0x9e;
+
+/** What the big place number shows this frame (drawn by the renderer: it adds a color to the picture). */
+export interface PlaceShow {
+  n: number;
+  add: Rgb;
+}
+
+/** Colors added to the picture inside the place number: red while racing, then a rainbow for a podium finish. */
+export const PLACE_RED: Rgb = [144, 0, 0];
+const PLACE_RAINBOW: Rgb[] = [[144, 0, 0], [144, 148, 0], [0, 148, 0], [0, 148, 144], [0, 0, 144], [144, 0, 144]];
+export function placeRainbow(frame: number): Rgb {
+  return PLACE_RAINBOW[Math.floor(frame / 4) % PLACE_RAINBOW.length];
+}
+
 export class RaceHud {
-  constructor(private layer: Layer) {}
+  /** Set by place(); the renderer draws it. */
+  placeShow: PlaceShow | null = null;
+
+  constructor(private layer: Layer, readonly gfx: RaceGfx | null = null) {}
 
   // ---------- Timer and lap box (BG3, top right) ----------
 
@@ -86,18 +111,61 @@ export class RaceHud {
     L.sprite(digit(n % 10), 214, y, PAL_HUD);
   }
 
-  /** Place, big and gray at the right of the race view: the timer font's digit fill, pixel-doubled. */
-  place(n: number) {
-    if (n < 1 || n > 9) return;
+  /** Place: the big italic number at the right of the race view (a color added to the picture). */
+  place(n: number, add: Rgb = PLACE_RED) {
+    if (n < 1 || n > 8) return;
+    this.placeShow = { n, add };
+  }
+
+  /** Lives left in the Grand Prix: kart icon, "x", digit (above the coins). */
+  lives(n: number) {
+    const L = this.layer, y = 84;
+    const digit = (d: number) => (d < 5 ? 0xa7 + d : 0xb7 + d - 5);
+    L.sprite(0x5e, 182, y, PAL_HUD);
+    L.sprite(0x5f, 190, y, PAL_HUD);
+    L.sprite(0x4e, 198, y, PAL_HUD);
+    L.sprite(digit(Math.max(0, Math.min(9, n))), 206, y, PAL_HUD);
+  }
+
+  /** After the finish: each lap's time and the total, in the menu font, over the race view. */
+  lapTimes(laps: (number | null)[], totalMs: number) {
+    const font = this.gfx?.font;
+    if (!font) return;
+    const L = this.layer, c = FONT_COLORS;
+    // Header: "LAP TIME" in its pre-drawn white-on-black tiles, in a black box.
+    L.rect(100, 21, 64, 8, [0, 0, 0]);
+    for (let i = 0; i < 5; i++) L.fontTile(font, 0x30 + i, 108 + i * 8, 21, c);
+    L.fontTile(font, 0x35, 148, 21, c, 7);
+    const time = (x: number, y: number, ms: number | null) => {
+      const t = ms === null ? null : Math.min(Math.floor(ms / 10), 9 * 6000 + 5999);
+      const sec = t === null ? 0 : Math.floor(t / 100) % 60;
+      const d = t === null ? null : [Math.floor(t / 6000), Math.floor(sec / 10), sec % 10, Math.floor((t % 100) / 10), t % 10];
+      const glyphs = d ? [d[0], F_MINUTE, d[1], d[2], F_SECOND, d[3], d[4]] : [F_DASH, F_MINUTE, F_DASH, F_DASH, F_SECOND, F_DASH, F_DASH];
+      [0, 8, 16, 24, 32, 40, 48].forEach((dx, i) => L.fontTile(font, glyphs[i], x + dx, y, c));
+    };
+    laps.slice(0, 5).forEach((ms, i) => {
+      const y = 37 + i * 9;
+      L.fontTile(font, 0x15, 88, y, c); // L
+      L.fontTile(font, 1 + i, 96, y, c);
+      time(112, y, ms);
+    });
+    for (let x = 80; x < 176; x += 8) L.fontTile(font, F_RULE, x, 80, c);
+    for (let i = 0; i < 3; i++) L.fontTile(font, 0xa0 + i, 80 + i * 8, 89, c);
+    time(112, 89, totalMs);
+  }
+
+  /** Left edge after the finish: who finished in which place (box with the place, driver's head). */
+  finishOrder(rows: { place: number; character: number; palette: number }[]) {
     const L = this.layer;
-    const color: Rgb = [208, 212, 208]; // as measured on the original screen
-    // 2x wide, 1.5x tall (24 lines), as big as the original number.
-    for (let oy = 0; oy < 24; oy++) {
-      const y = Math.floor(oy / 1.5), t = (y < 8 ? 0x80 : 0x90) + n;
-      for (let x = 0; x < 8; x++) {
-        if (L.hudPixel(t, x, y & 7) === 1) L.rect(222 + x * 2, 79 + oy, 2, 1, color);
-      }
-    }
+    rows.slice(0, 4).forEach((r, i) => {
+      const y = 39 + i * 17;
+      // Teal box, the place in the timer's big digits, the head.
+      L.rect(8, y, 24, 16, [0, 64, 64]);
+      const white: Rgb[] = [[0, 0, 0], [248, 248, 248], [168, 168, 168], [0, 64, 64]];
+      L.hudTile(0x80 + r.place, 8, y, white);
+      L.hudTile(0x90 + r.place, 8, y + 8, white);
+      L.sprite(0x120 + r.character * 2, 16, y, r.palette, true);
+    });
   }
 
   /** Held item (HUD icon with its box) at the top center of the sky band. */

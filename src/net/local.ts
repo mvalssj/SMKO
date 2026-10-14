@@ -29,7 +29,7 @@ export class LocalChannel implements Channel {
   }
 
   send(msg: ClientMsg) {
-    if (msg.t === 'cpuDrop') this.authority.cpuDrop(msg.cpu, msg.x, msg.y, msg.a);
+    if (msg.t === 'cpuDrop') this.authority.cpuDrop(msg.cpu, msg.x, msg.y, msg.a, msg.kind);
     else if (msg.t === 'state') this.authority.updateKart(this.selfId, msg.k.lap, msg.k.p);
     else if (msg.t === 'cpu') msg.karts.forEach((k) => this.authority.updateKart(k.id, k.lap, k.p));
     else this.authority.handle(this.selfId, msg);
