@@ -70,6 +70,8 @@ npx tsx tools/item-test.ts "Super Mario Kart (USA).sfc"        # regras de itens
 npm start & npx tsx tools/net-test.ts "Super Mario Kart (USA).sfc" 8 0     # 8 clientes online com itens
 npm start & npx tsx tools/net-test.ts "Super Mario Kart (USA).sfc" 3 0 1   # 3 clientes + 5 CPUs do anfitrião
 npm start & npx tsx tools/lobby-test.ts "Super Mario Kart (USA).sfc"      # lobby ao vivo + espectador entrando no meio
+npx tsx tools/race-preview.ts "Super Mario Kart (USA).sfc" saida 0 3       # tela da corrida (software) com o bot dirigindo
+npx tsx tools/hud-preview.ts "Super Mario Kart (USA).sfc" saida            # HUD e Lakitu (largada, voltas, chegada...)
 ```
 
 Estado atual: bot-test 20/20, cpu-test 160/160 CPUs terminam, item-test 13/13, net-test passando, lobby-test 15/15.
@@ -79,7 +81,16 @@ plataformas.
 ## O que já funciona
 
 - Leitura da ROM (US/JP/EU, com ou sem cabeçalho de 512 bytes) e das 20 pistas GP
-- Mode 7 em WebGL na resolução original (256×224), com o tile de preenchimento fora do mapa como no SNES
+- Tela da corrida 1P como a original (256×224, medida no jogo): faixa do céu nas linhas 3–23, pista em Mode 7 nas
+  linhas 24–106 (horizonte na 24, rodas do seu kart na 101), faixa preta e o mapa do circuito inclinado embaixo
+  (linhas 115–218) com as cabeças dos pilotos
+- HUD original desenhado com os tiles da ROM: caixa da volta e cronômetro na faixa do céu, moedas e a posição grande
+  na pista, item no topo
+- Lakitu com os sprites da ROM: largada com o semáforo (desce, acende vermelho/vermelho/verde a cada 65 quadros,
+  sobe — trajetória medida quadro a quadro), placas "LAP 2/3/4" e "FINAL LAP", bandeira na chegada, placa de
+  contramão e o resgate quando você cai
+- Pilotos desenhados 1:1 em pixels do SNES, escolhendo o tamanho desenhado à mão mais próximo (sem esticar)
+- Mode 7 em WebGL, com o tile de preenchimento fora do mapa como no SNES
 - Fundo com parallax de cada tema (duas camadas que giram com a câmera) e céu na cor original
 - Os 8 pilotos com os sprites da ROM: 16 ângulos (espelhados para o outro lado) × 11 tamanhos desenhados à mão,
   com as paletas do tema da pista; escolha de personagem no lobby (um por jogador na sala)
@@ -100,8 +111,9 @@ plataformas.
 
 ## Próximas fases
 
-1. Telas de resultado e classificação do GP e o HUD da corrida no estilo original (hoje são HTML), sons e músicas
-   (o SPC da ROM), animações dos pilotos (giro, queda com Lakitu)
+1. Telas de resultado e classificação do GP no estilo original (hoje são HTML), sons e músicas (o SPC da ROM),
+   animações dos pilotos (giro, queda). A perspectiva exata do Mode 7 e do mapa de baixo é calculada pelo DSP-1 no
+   original e foi aproximada (a análise roda sem o chip)
 2. **Física fiel**: extrair do código 65816 (REA + Ghidra) aceleração, curva, derrapagem e pulo de cada
    personagem, e validar contra o jogo original. Hoje as constantes são aproximadas, inclusive o "voo"
    ao sair de uma borda em alta velocidade (usado para atravessar a ponte quebrada do Donut Plains 3)
@@ -131,6 +143,23 @@ VRAM/CGRAM/OAM/registradores em cada tela e rastreando cada byte de volta à ROM
 
 A caixa preta dos menus é a janela 1 do PPU escondendo BG1/BG2 sobre um BG3 preto; os textos são sprites (dígitos
 0x00–0x09, letras 0x0A–0x23); a fonte grande das copas usa 2 tiles por letra (0x80 + 2×índice).
+
+## Tela da corrida (HUD, Lakitu, mapa)
+
+Medida da mesma forma, numa corrida do jogo rodando no snes9x (sem o DSP-1 a pista sai errada, mas os sprites, o HUD
+e a divisão da tela são os reais). `src/rom/race-gfx.ts` monta a VRAM de sprites igual à do jogo (conferida byte a byte):
+
+| Gráfico | Origem |
+|---|---|
+| Fumaça, faíscas (tiles 00–3F) | bloco 0x00903 |
+| Lakitu, nuvem, moedas, placas LAP/FINAL LAP, dígitos, bandeira, contramão (40–BF) | bloco 0x10000 +0x200 |
+| Sombra do Lakitu (EB–ED), lâmpadas do semáforo (FB–FF) | bloco 0x10000 +0x120 / +0x180 |
+| Cabeças do mapa e números de posição (120–15B) | bloco 0x30000 +0x800 / +0xC80 |
+| Fonte do cronômetro, caixa da volta, ícones (BG3 2bpp, tile 0x80+) | bloco 0x112F8 |
+
+As paletas dos sprites são as da pista (iguais à CGRAM do jogo); as do HUD (branco, azul-claro, preto) o jogo troca no
+meio do quadro. A largada: o Lakitu aparece 306 quadros antes do verde, primeira luz vermelha em −130, segunda em −65,
+verde em 0, e sobe acelerando a partir de +66. O "8" grande da posição é aproximado (não está na VRAM de sprites).
 
 ## Mapeamento da ROM (sprites)
 

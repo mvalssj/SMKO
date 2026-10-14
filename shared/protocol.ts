@@ -4,7 +4,8 @@ export const MAX_PLAYERS = 8;
 export const TOTAL_LAPS = 5;
 /** Client -> server state rate and server -> client broadcast rate. */
 export const NET_HZ = 20;
-export const COUNTDOWN_MS = 4000;
+/** Course shown to the green light: Lakitu comes down with the lights (5.1 s in the original). */
+export const COUNTDOWN_MS = 5200;
 /** Grand Prix points by finishing place (from the ROM: 9, 6, 3, 1, then nothing). */
 export const GP_POINTS = [9, 6, 3, 1, 0, 0, 0, 0];
 /** Pause between the races of an online Grand Prix. */

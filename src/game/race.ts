@@ -1,12 +1,12 @@
-// One race: local kart simulation, remote karts, items, camera, HUD and minimap.
+// One race: local kart simulation, remote karts, items, camera, and the original HUD (timer, Lakitu, map).
 // Works offline (solo practice, items run by a LocalChannel) or online (NetClient).
 
 import {
-  CC_SPEED, CHARACTER_NAMES, EFFECT_GHOST, EFFECT_SHRUNK, EFFECT_STAR, ITEM_KINDS, KART_COLORS, NET_HZ, TOTAL_LAPS,
+  CC_SPEED, CHARACTER_NAMES, EFFECT_GHOST, EFFECT_SHRUNK, EFFECT_STAR, ITEM_KINDS, NET_HZ, TOTAL_LAPS,
   type Cc, type ItemKind, type KartNetState, type PlayerInfo, type ServerMsg,
 } from '../../shared/protocol';
 import { ROULETTE_MS } from '../../shared/items';
-import { Genre, MAP_PX, MAP_SIZE, TILE, type DriverSprites, type ItemGraphics, type SpriteFrame, type Track } from '../rom/rom';
+import { CHARACTERS, Genre, MAP_SIZE, TILE, type DriverSprites, type ItemGraphics, type SpriteFrame, type Track } from '../rom/rom';
 import { RemoteKarts, type NetClient } from '../net/client';
 import type { Channel } from '../net/local';
 import { readInput } from './input';
@@ -14,7 +14,8 @@ import {
   NO_INPUT, STEP_MS, applyBreak, coverTiles, createKart, featherJump, isInvincible, kartHeight, raceGeometry,
   restoreTiles, spinOut, stepKart, tileCluster, type Kart, type SavedTile,
 } from './physics';
-import { CHASE_DISTANCE, Renderer, type ObjectSprite, type Sprite } from './renderer';
+import { CHASE_DISTANCE, Renderer, type MapMarker, type ObjectSprite, type Sprite } from './renderer';
+import { RaceHud, type LakituShow } from './hud';
 import { CpuDriver, rubberBand } from './cpu';
 import { objectState } from './objects';
 import { ITEM_HIT_DISTANCE, OWNER_GRACE_FRAMES, advanceEntity, createEntity, type Entity } from './items';
@@ -60,14 +61,9 @@ export interface RaceResult {
   timeMs: number | null;
 }
 
+/** Everything else is drawn in the picture, like the original; this line only says who a spectator watches. */
 export interface Hud {
-  lap: HTMLElement;
-  place: HTMLElement;
-  time: HTMLElement;
-  countdown: HTMLElement;
-  minimap: HTMLCanvasElement;
-  item: HTMLCanvasElement;
-  coins: HTMLElement;
+  note: HTMLElement;
 }
 
 export class Race {
@@ -81,7 +77,6 @@ export class Race {
   private frame = 0;
   private startAt: number;
   private finishedAt = 0;
-  private minimapBg: HTMLCanvasElement;
   private unsubs: (() => void)[] = [];
 
   private item: ItemKind | null = null;
@@ -91,8 +86,14 @@ export class Race {
   private starTouchCooldown = 0;
   private entities = new Map<number, Entity>();
   private savedTiles = new Map<number, SavedTile>();
-  private iconCanvases: HTMLCanvasElement[];
   private cpus: Cpu[];
+  /** Lakitu's lap sign / finish flag: what and since which race frame. */
+  private sign: { kind: 'lap' | 'finish'; lap: number; at: number } | null = null;
+  /** Race frame the own kart started falling off the track (Lakitu fishes it back). */
+  private fellAt: number | null = null;
+  /** Wrong way: progress samples, and since when the kart has been going backwards. */
+  private progressSample = 0;
+  private reverseSince: number | null = null;
   /** Ids simulated here: this player and its CPUs. */
   private local: Set<number>;
   /** Spectating: place (0 = leader) of the kart the camera follows. */
@@ -110,10 +111,7 @@ export class Race {
     this.startAt = performance.now() + o.startInMs;
     this.placeCamera(true);
     o.renderer.setTrack(o.track, o.drivers, [3, 4, 5].map((i) => cutout(o.itemGfx.icons[i])));
-    this.minimapBg = buildMinimap(o.track);
-    this.iconCanvases = o.itemGfx.icons.map(toCanvas);
-    o.hud.coins.textContent = '0';
-    this.drawItemBox(0);
+    o.hud.note.textContent = '';
 
     if (o.net) {
       this.unsubs.push(o.net.on((m) => {
@@ -188,7 +186,6 @@ export class Race {
         break;
       case 'coins':
         k.coins = m.coins;
-        o.hud.coins.textContent = String(m.coins);
         break;
       case 'tiles':
         if (m.restore) restoreTiles(o.track, this.savedTiles, m.tiles);
@@ -314,7 +311,12 @@ export class Race {
     if (this.kart.lap > TOTAL_LAPS && !this.finishedAt && lapBefore === TOTAL_LAPS) {
       this.finishedAt = now;
       this.o.net?.send({ t: 'finish', timeMs: Math.round(now - this.startAt) });
+      this.sign = { kind: 'finish', lap: TOTAL_LAPS, at: this.raceFrame(now) };
+    } else if (this.kart.lap > lapBefore && this.kart.lap >= 2 && this.kart.lap <= TOTAL_LAPS) {
+      // Lakitu shows "LAP 2" .. "LAP 4", then "FINAL LAP".
+      this.sign = { kind: 'lap', lap: this.kart.lap, at: this.raceFrame(now) };
     }
+    this.watchLakitu(now, racing);
 
     this.placeCamera(false);
     // Positions go to the server online, or to the local item authority in solo (for item odds by place).
@@ -372,24 +374,53 @@ export class Race {
     this.cam.y = y + Math.cos(this.cam.angle) * back;
   }
 
+  /** Falling off (Lakitu's rescue) and going the wrong way (his reverse sign). */
+  private watchLakitu(now: number, racing: boolean) {
+    const k = this.kart, frame = this.raceFrame(now);
+    if (k.fall > 0) this.fellAt ??= frame;
+    else if (this.fellAt !== null && frame - this.fellAt > 40) this.fellAt = null;
+    // Sampled twice a second: progress going down while driving forward = wrong way.
+    if (racing && !this.finishedAt && frame % 30 === 0) {
+      const back = k.progress < this.progressSample - 0.5 && k.speed > 0.5 && k.fall === 0;
+      if (back) this.reverseSince ??= frame;
+      else if (k.progress > this.progressSample) this.reverseSince = null;
+      this.progressSample = k.progress;
+    }
+  }
+
+  /** What Lakitu is doing now (most urgent first). */
+  private lakituShow(frame: number): LakituShow | null {
+    if (this.o.spectate) return frame <= 140 ? { kind: 'start', t: frame } : null;
+    if (this.fellAt !== null) return { kind: 'rescue', t: frame - this.fellAt, x: 128, y: 70 };
+    if (this.reverseSince !== null && frame - this.reverseSince >= 30) return { kind: 'reverse', t: frame - this.reverseSince - 30 };
+    if (this.sign) {
+      const show: LakituShow = this.sign.kind === 'lap'
+        ? { kind: 'lap', lap: this.sign.lap, t: frame - this.sign.at }
+        : { kind: 'finish', t: frame - this.sign.at };
+      if (!RaceHud.done(show)) return show;
+      if (this.sign.kind === 'lap') this.sign = null;
+    }
+    if (frame <= 140) return { kind: 'start', t: frame };
+    return null;
+  }
+
   // ---------- Drawing ----------
 
   private draw(now: number) {
     const o = this.o;
     const remotes = [...this.remote.sample(), ...this.cpus.map((c) => netState(c.id, c.kart))];
     const charOf = (id: number) => o.players.find((p) => p.id === id)?.character ?? 0;
-    const colorOf = (id: number) => KART_COLORS[charOf(id)];
     const nameOf = (id: number) => CHARACTER_NAMES[charOf(id)];
-
     const watched = o.spectate ? this.watched(remotes) : null;
+    const me = this.kart;
+
     const sprites: Sprite[] = remotes.map((r) => ({
-      x: r.x, y: r.y, angle: r.a, color: colorOf(r.id), character: charOf(r.id), label: r === watched ? undefined : nameOf(r.id),
+      x: r.x, y: r.y, angle: r.a, character: charOf(r.id),
       scale: (r.f > 0 ? r.f / 70 : 1) * (r.e & EFFECT_SHRUNK ? 0.5 : 1), lift: r.h,
       alpha: r.e & EFFECT_GHOST ? 0.15 : 1, flash: !!(r.e & EFFECT_STAR),
     }));
-    const me = this.kart;
     if (!o.spectate) sprites.push({
-      x: me.x, y: me.y, angle: me.angle, color: colorOf(o.selfId), character: charOf(o.selfId),
+      x: me.x, y: me.y, angle: me.angle, character: charOf(o.selfId),
       scale: (me.fall > 0 ? me.fall / 70 : 1) * (me.shrink > 0 ? 0.5 : 1), lift: kartHeight(me),
       alpha: me.ghost > 0 ? 0.45 : 1, flash: me.star > 0,
     });
@@ -403,80 +434,47 @@ export class Race {
     for (const e of this.entities.values()) {
       objects.push({ x: e.x, y: e.y, lift: 0, item: true, frame: e.kind === 'banana' ? 0 : e.kind === 'greenShell' ? 1 : 2 });
     }
-    o.renderer.render(this.cam, sprites, objects);
 
-    if (o.spectate) {
-      this.drawSpectatorHud(now, remotes, watched, nameOf);
-      this.drawMinimap(remotes, colorOf, watched?.id);
-      return;
-    }
+    // Course map: everyone's head; our own drawn last (on top).
+    const marker = (id: number, x: number, y: number): MapMarker => {
+      const c = charOf(id);
+      return { x, y, character: c, palette: CHARACTERS[c].palette - 8 };
+    };
+    const markers = remotes.filter((r) => r !== watched).map((r) => marker(r.id, r.x, r.y));
+    if (watched) markers.push(marker(watched.id, watched.x, watched.y));
+    else if (!o.spectate) markers.push(marker(o.selfId, me.x, me.y));
 
-    // HUD
-    const lap = Math.min(TOTAL_LAPS, Math.max(1, me.lap));
-    o.hud.lap.textContent = this.finishedAt ? 'FIM!' : `VOLTA ${lap}/${TOTAL_LAPS}`;
-    const all: { id: number; p: number }[] = [{ id: o.selfId, p: me.progress }, ...remotes.map((r) => ({ id: r.id, p: r.p }))];
-    if (this.finishedAt) all[0].p = Infinity;
-    const place = all.filter((x) => x.p > me.progress).length + 1;
-    o.hud.place.textContent = o.net || this.cpus.length ? `${place}º` : '';
-    const t = this.finishedAt ? this.finishedAt - this.startAt : Math.max(0, now - this.startAt);
-    o.hud.time.textContent = formatTime(t);
+    // Whose numbers the HUD shows: our own kart, or the one a spectator follows.
+    const ranked = [{ id: o.selfId, p: this.finishedAt ? Infinity : me.progress }, ...remotes.map((r) => ({ id: r.id, p: r.p }))];
+    const focus = watched ? { id: watched.id, p: watched.p, lap: watched.lap } : { id: o.selfId, p: ranked[0].p, lap: me.lap };
+    const field = o.spectate ? ranked.slice(1) : ranked;
+    // Ties count as ahead: on the grid, the last kart shows 8th like the original.
+    const place = field.filter((x) => x.id !== focus.id && x.p >= focus.p).length + 1;
+    const raceMs = this.finishedAt ? this.finishedAt - this.startAt : Math.max(0, now - this.startAt);
+    const lakitu = this.lakituShow(frame);
 
-    const left = this.startAt - now;
-    o.hud.countdown.textContent = left > 3000 ? '' : left > 0 ? String(Math.ceil(left / 1000)) : left > -800 ? 'JÁ!' : '';
-
-    this.drawItemBox(now);
-    this.drawMinimap(remotes, colorOf);
+    o.renderer.render(this.cam, sprites, objects, markers, (hud) => {
+      hud.timer(Math.min(TOTAL_LAPS, Math.max(1, focus.lap)), raceMs);
+      if (o.items && !o.spectate) hud.coins(me.coins);
+      if (o.net || this.cpus.length) hud.place(place);
+      if (!o.spectate) this.drawItemBox(now, hud);
+      if (lakitu) hud.lakitu(lakitu, frame);
+    });
+    o.hud.note.textContent = watched ? `ASSISTINDO ${nameOf(watched.id).toUpperCase()}  (← → troca)` : o.spectate ? 'ASSISTINDO' : '';
   }
 
-  private drawSpectatorHud(now: number, remotes: KartNetState[], w: KartNetState | null, nameOf: (id: number) => string) {
-    const o = this.o;
-    const lap = Math.min(TOTAL_LAPS, Math.max(1, w?.lap ?? 1));
-    o.hud.lap.textContent = w ? `ASSISTINDO ${nameOf(w.id).toUpperCase()} · VOLTA ${lap}/${TOTAL_LAPS}  (← → troca)` : 'ASSISTINDO';
-    o.hud.place.textContent = w ? `${remotes.filter((r) => r.p > w.p).length + 1}º` : '';
-    o.hud.time.textContent = formatTime(Math.max(0, now - this.startAt));
-    const left = this.startAt - now;
-    o.hud.countdown.textContent = left > 3000 ? '' : left > 0 ? String(Math.ceil(left / 1000)) : left > -800 ? 'JÁ!' : '';
-    this.drawItemBox(0);
-  }
-
-  private drawItemBox(now: number) {
-    const c = this.o.hud.item;
-    const ctx = c.getContext('2d')!;
-    ctx.clearRect(0, 0, c.width, c.height);
+  /** Held item (or the roulette) in its box at the top center. */
+  private drawItemBox(now: number, hud: RaceHud) {
     let icon: number | null = null;
-    // Roulette: cycle through the icons until the rolled item shows up.
     if (now < this.rollingUntil) icon = Math.floor(now / 70) % ITEM_KINDS.length;
     else if (this.item) icon = ITEM_KINDS.indexOf(this.item);
-    if (icon !== null) ctx.drawImage(this.iconCanvases[icon], 0, 0);
-  }
-
-  private drawMinimap(remotes: KartNetState[], colorOf: (id: number) => string, highlight?: number) {
-    const c = this.o.hud.minimap;
-    const ctx = c.getContext('2d')!;
-    const s = c.width / MAP_PX;
-    ctx.drawImage(this.minimapBg, 0, 0, c.width, c.height);
-    const dot = (x: number, y: number, color: string, r: number) => {
-      ctx.fillStyle = '#000';
-      ctx.fillRect(x * s - r - 1, y * s - r - 1, r * 2 + 2, r * 2 + 2);
-      ctx.fillStyle = color;
-      ctx.fillRect(x * s - r, y * s - r, r * 2, r * 2);
-    };
-    for (const r of remotes) dot(r.x, r.y, colorOf(r.id), r.id === highlight ? 4 : 3);
-    if (!this.o.spectate) dot(this.kart.x, this.kart.y, colorOf(this.o.selfId), 4);
+    if (icon !== null) hud.itemIcon(this.o.itemGfx.icons[icon]);
   }
 }
 
 function netState(id: number, k: Kart): KartNetState {
   const e = (k.star > 0 ? EFFECT_STAR : 0) | (k.ghost > 0 ? EFFECT_GHOST : 0) | (k.shrink > 0 ? EFFECT_SHRUNK : 0);
   return { id, x: r1(k.x), y: r1(k.y), a: r3(k.angle), s: r3(k.speed), lap: k.lap, p: k.progress, f: k.fall, h: r1(kartHeight(k)), e };
-}
-
-function toCanvas(f: SpriteFrame): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = f.w;
-  c.height = f.h;
-  c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(f.pixels), f.w, f.h), 0, 0);
-  return c;
 }
 
 /** HUD icons have a solid background: clear it (flood fill from the border) to use them as track sprites. */
@@ -500,13 +498,6 @@ function cutout(f: SpriteFrame): SpriteFrame {
   // The bottom row is the HUD box border.
   px.fill(0, (f.h - 1) * f.w * 4);
   return { w: f.w, h: f.h, pixels: px };
-}
-
-function buildMinimap(track: Track): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = c.height = MAP_PX;
-  c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(track.pixels), MAP_PX, MAP_PX), 0, 0);
-  return c;
 }
 
 export function formatTime(ms: number): string {

@@ -1,7 +1,8 @@
 import {
-  CHARACTER_NAMES, CPU_ID_BASE, type Cc, type PlayerInfo, type ResultEntry, type ServerMsg, type Standing,
+  CHARACTER_NAMES, COUNTDOWN_MS, CPU_ID_BASE, type Cc, type PlayerInfo, type ResultEntry, type ServerMsg, type Standing,
 } from '../shared/protocol';
 import { SmkRom, type DriverSprites, type TrackInfo } from './rom/rom';
+import { loadRaceGfx } from './rom/race-gfx';
 import { NetClient } from './net/client';
 import { LocalChannel } from './net/local';
 import { Race, formatTime } from './game/race';
@@ -139,8 +140,8 @@ function nextGpRace() {
 
 function runSoloRace(track: TrackInfo, cc: Cc, players: PlayerInfo[], cpus: { id: number; slot: number; skill: number }[], items: boolean, slot = 0) {
   solo?.close();
-  solo = new LocalChannel(1, rom!.itemOdds(track), 3500, cpus.map((c) => c.id));
-  startRace({ track: rom!.loadTrack(track), cc, players, cpus, items, selfId: 1, slot, startInMs: 3500, online: false });
+  solo = new LocalChannel(1, rom!.itemOdds(track), COUNTDOWN_MS, cpus.map((c) => c.id));
+  startRace({ track: rom!.loadTrack(track), cc, players, cpus, items, selfId: 1, slot, startInMs: COUNTDOWN_MS, online: false });
   const check = () => {
     if (!race || net) return;
     if (!race.finished) { setTimeout(check, 250); return; }
@@ -302,7 +303,7 @@ function startRace(a: StartArgs) {
   show('game');
   $('results').hidden = true;
   status('results-hint', '');
-  renderer ??= new Renderer($('floor') as HTMLCanvasElement, $('overlay') as HTMLCanvasElement);
+  renderer ??= new Renderer($('floor') as HTMLCanvasElement, $('overlay') as HTMLCanvasElement, loadRaceGfx(rom!));
   const drivers = new Map<number, DriverSprites | null>();
   for (const p of a.players) if (!drivers.has(p.character)) drivers.set(p.character, rom!.loadDriverSprites(p.character, a.track.colors));
   race = new Race({
@@ -311,10 +312,7 @@ function startRace(a: StartArgs) {
     net: a.online ? net : null, renderer,
     channel: a.online ? net! : solo!,
     itemGfx: rom!.loadItemGraphics(a.track.colors),
-    hud: {
-      lap: $('hud-lap'), place: $('hud-place'), time: $('hud-time'), countdown: $('countdown'),
-      minimap: $('minimap') as HTMLCanvasElement, item: $('hud-item') as HTMLCanvasElement, coins: $('hud-coins'),
-    },
+    hud: { note: $('hud-note') },
   });
   race.start();
 }
