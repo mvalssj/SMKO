@@ -61,6 +61,8 @@ const MUSIC_INTRO_AT = -168;
 const MUSIC_LOOP_AT = 416;
 const MUSIC_AFTER_FINISH = 215;
 const FINAL_LAP_FANFARE = 118;
+const FINISH_SWING_FRAMES = 60;
+const LAP_TIMES_AFTER = 494;
 
 interface Cpu {
   id: number;
@@ -378,7 +380,11 @@ export class Race {
     }
     this.watchLakitu(now, racing);
 
-    this.placeCamera(false);
+    if (this.finishedAt) {
+      // After the finish the camera swings round to the front of the kart (half a turn in about a second, as measured).
+      const t = Math.min(1, (now - this.finishedAt) / (FINISH_SWING_FRAMES * STEP_MS));
+      this.placeCamera(true, this.kart.x, this.kart.y, this.kart.angle + Math.PI * (t * t * (3 - 2 * t)));
+    } else this.placeCamera(false);
     // Positions go to the server online, or to the local item authority in solo (for item odds by place).
     if (++this.frame % Math.round(60 / NET_HZ) === 0) {
       const { id: _id, ...state } = netState(this.o.selfId, this.kart);
@@ -622,8 +628,9 @@ export class Race {
         hud.finishOrder(this.finishers.map((id, i) => {
           const c = charOf(id);
           return { place: i + 1, character: c, palette: CHARACTERS[c].palette - 8 };
-        }));
-        if (now - this.finishedAt > 1500) hud.lapTimes(this.lapTimes, this.finishedAt - this.startAt);
+        }), frame);
+        // The lap times come up once Lakitu's flag flight is over (494 frames after the line, measured).
+        if (now - this.finishedAt > LAP_TIMES_AFTER * STEP_MS) hud.lapTimes(this.lapTimes, this.finishedAt - this.startAt);
       }
       if (!o.spectate) this.drawItemBox(now, hud);
       if (lakitu) hud.lakitu(lakitu, frame);

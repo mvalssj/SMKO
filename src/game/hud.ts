@@ -155,16 +155,17 @@ export class RaceHud {
   }
 
   /** Left edge after the finish: who finished in which place (box with the place, driver's head). */
-  finishOrder(rows: { place: number; character: number; palette: number }[]) {
+  finishOrder(rows: { place: number; character: number; palette: number }[], frame = 0) {
     const L = this.layer;
+    // Measured: the box cycles sprite palettes 1, 1, 1, 1, 5, 5, 6, 6 (teal, red, orange), one per frame;
+    // the head switches pose every 8 frames.
+    const boxPal = [1, 1, 1, 1, 5, 5, 6, 6][((frame % 8) + 8) % 8];
+    const pose = Math.floor(frame / 8) % 2;
     rows.slice(0, 4).forEach((r, i) => {
       const y = 39 + i * 17;
-      // Teal box, the place in the timer's big digits, the head.
-      L.rect(8, y, 24, 16, [0, 64, 64]);
-      const white: Rgb[] = [[0, 0, 0], [248, 248, 248], [168, 168, 168], [0, 64, 64]];
-      L.hudTile(0x80 + r.place, 8, y, white);
-      L.hudTile(0x90 + r.place, 8, y + 8, white);
-      L.sprite(0x120 + r.character * 2, 16, y, r.palette, true);
+      L.sprite(0x1c0 + r.place - 1, 8, y, boxPal);
+      L.sprite(0x1d0 + r.place - 1, 8, y + 8, boxPal);
+      L.sprite((pose ? 0x1e0 : 0x120) + r.character * 2, 16, y, r.palette, true);
     });
   }
 
@@ -215,7 +216,8 @@ export class RaceHud {
   static done(show: LakituShow): boolean {
     switch (show.kind) {
       case 'start': return show.t > 140;
-      case 'lap': case 'finish': return show.t > SHOW_FRAMES;
+      case 'lap': return show.t > SIGN_FRAMES;
+      case 'finish': return show.t > FLAG_FRAMES;
       case 'reverse': return false;
       case 'rescue': return false;
     }
@@ -231,12 +233,12 @@ export class RaceHud {
   }
 
   /** Shadow on the road under Lakitu: grows as he comes down; drawn every other frame (it flickers). */
-  private shadow(y: number, frame: number) {
+  private shadow(y: number, frame: number, x = 36) {
     if (frame & 1) return;
     const L = this.layer;
-    if (y < -34) L.sprite(0xed, 44, 90, PAL_LAKITU);
-    else if (y < 0) { L.sprite(0xeb, 41, 90, PAL_LAKITU); L.sprite(0xeb, 47, 90, PAL_LAKITU, false, true); }
-    else { L.sprite(0xeb, 38, 90, PAL_LAKITU); L.sprite(0xec, 44, 90, PAL_LAKITU); L.sprite(0xeb, 50, 90, PAL_LAKITU, false, true); }
+    if (y < -34) L.sprite(0xed, x + 8, 90, PAL_LAKITU);
+    else if (y < 0) { L.sprite(0xeb, x + 5, 90, PAL_LAKITU); L.sprite(0xeb, x + 11, 90, PAL_LAKITU, false, true); }
+    else { L.sprite(0xeb, x + 2, 90, PAL_LAKITU); L.sprite(0xec, x + 8, 90, PAL_LAKITU); L.sprite(0xeb, x + 14, 90, PAL_LAKITU, false, true); }
   }
 
   private startLights(t: number, frame: number) {
@@ -253,32 +255,46 @@ export class RaceHud {
   }
 
   /** Lap 2-4: "LAP n" sign hanging from the rod; lap 5: "FINAL LAP". */
+  /**
+   * Lap 2-4: Lakitu holds up "LAP n" (lap 5: "FINAL LAP") in front of his face, swooping down from the top
+   * left and back (measured in the original: the sign replaces his head row, the cloud stays below it).
+   */
   private sign(t: number, frame: number, lap: number | 'final') {
-    const y = Math.round(visitY(t));
-    if (y < -64) return;
-    this.body(36, y);
-    const L = this.layer, sx = 58, sy = y + 18;
-    // The sign: rope piece on top, then the text (16 px tall), in Lakitu's palette.
-    L.sprite(0x90, sx, sy, PAL_LAKITU); L.sprite(0x91, sx + 8, sy, PAL_LAKITU);
+    if (t < 0 || t > SIGN_FRAMES) return;
+    const k = t / 3, i = Math.min(SIGN_PATH.length - 2, Math.floor(k)), u = k - i;
+    const x = Math.round(SIGN_PATH[i][0] + (SIGN_PATH[i + 1][0] - SIGN_PATH[i][0]) * u);
+    const y = Math.round(SIGN_PATH[i][1] + (SIGN_PATH[i + 1][1] - SIGN_PATH[i][1]) * u);
+    const L = this.layer;
+    L.sprite(0x46, x, y, PAL_LAKITU, true, true);
+    L.sprite(0x44, x + 16, y, PAL_LAKITU, true, true);
     if (lap === 'final') {
-      for (let i = 0; i < 4; i++) { L.sprite(0xac + i, sx + i * 8, sy + 8, PAL_LAKITU); L.sprite(0xbc + i, sx + i * 8, sy + 16, PAL_LAKITU); }
+      // The first sprite in OAM wins where they overlap: draw it last.
+      L.sprite(0xae, x + 8, y - 16, PAL_LAKITU, true);
+      L.sprite(0xac, x - 8, y - 16, PAL_LAKITU, true);
     } else {
-      L.sprite(0xa0, sx, sy + 8, PAL_LAKITU); L.sprite(0xa1, sx + 8, sy + 8, PAL_LAKITU);
-      L.sprite(0xb0, sx, sy + 16, PAL_LAKITU); L.sprite(0xb1, sx + 8, sy + 16, PAL_LAKITU);
-      L.sprite(0xa4 + lap - 2, sx + 16, sy + 8, PAL_LAKITU); L.sprite(0xb4 + lap - 2, sx + 16, sy + 16, PAL_LAKITU);
+      L.sprite(0xa3 + lap - 2, x + 7, y - 16, PAL_LAKITU, true);
+      L.sprite(0xa0, x - 1, y - 16, PAL_LAKITU, true);
     }
-    this.shadow(y, frame);
+    this.shadow(y - 16, frame, x);
   }
 
-  /** Finish: Lakitu waves the checkered flag (two frames). */
+  /**
+   * Finish: Lakitu swoops down from the top left, across the view and back up, waving the checkered flag
+   * (path and poses measured frame by frame in the original: no flag, flag up, down, up, down, up...).
+   */
   private flag(t: number, frame: number) {
-    const y = Math.round(visitY(t));
-    if (y < -64) return;
-    this.body(36, y, true);
-    const L = this.layer, f = (frame >> 3) & 1 ? 0x8c : 0x6c;
-    L.sprite(f, 60, y + 4, PAL_LAKITU, true);
-    L.sprite(f + 2, 76, y + 4, PAL_LAKITU, true);
-    this.shadow(y, frame);
+    if (t < 0 || t > FLAG_FRAMES) return;
+    const k = t / 6, i = Math.min(FLAG_PATH.length - 2, Math.floor(k)), u = k - i;
+    const x = Math.round(FLAG_PATH[i][0] + (FLAG_PATH[i + 1][0] - FLAG_PATH[i][0]) * u);
+    const y = Math.round(FLAG_PATH[i][1] + (FLAG_PATH[i + 1][1] - FLAG_PATH[i][1]) * u);
+    const pose = FLAG_POSES[Math.floor(t / FLAG_POSE_FRAMES) % FLAG_POSES.length];
+    const L = this.layer;
+    L.sprite(0x4a, x, y, PAL_LAKITU, true, true);
+    L.sprite([0x80, 0x6e, 0x8e][pose], x + 16, y, PAL_LAKITU, true, true);
+    L.sprite(0x4c, x, y + 16, PAL_LAKITU, true, true);
+    L.sprite(pose ? 0x44 : 0x82, x + 16, y + 16, PAL_LAKITU, true, true);
+    if (pose) L.sprite(pose === 1 ? 0x6c : 0x8c, x + 24, y + 8, PAL_LAKITU, true, true);
+    this.shadow(y, frame, x);
   }
 
   /** Going the wrong way: Lakitu holds up the yellow "reverse" sign. */
@@ -294,7 +310,9 @@ export class RaceHud {
   /** Fishing the kart back onto the track: Lakitu above the kart, lowering it on the line. */
   private rescue(s: Extract<LakituShow, { kind: 'rescue' }>) {
     const L = this.layer;
-    const y = Math.round(Math.min(s.y - 44, -48 + s.t * 1.2));
+    // Comes down 1 px per frame (measured), rod and hook (0x48) under the cloud.
+    const y = Math.round(Math.min(s.y - 44, -56 + s.t));
+    L.sprite(0x48, s.x, y + 16, PAL_LAKITU, true, true);
     L.sprite(0x42, s.x - 16, y, PAL_LAKITU, true, true);
     L.sprite(0x40, s.x, y, PAL_LAKITU, true, true);
     L.sprite(0x46, s.x - 16, y + 16, PAL_LAKITU, true, true);
@@ -302,7 +320,30 @@ export class RaceHud {
   }
 }
 
-/** Frames a lap sign / the finish flag stays (down, hold, up). */
+/** Lap signs: the cloud's position every 3 frames, and how long the sign stays (measured in the original). */
+const SIGN_PATH: [number, number][] = [
+  [6,-29], [6,-23], [12,-17], [17,-11], [23,-5], [28,1], [33,6], [38,12], [43,17], [48,22], [52,26], [56,30], [60,34], [64,38],
+  [67,41], [70,44], [73,47], [76,50], [79,52], [81,54], [83,56], [85,57], [87,58], [89,59], [90,60], [91,60], [92,60], [93,60],
+  [93,59], [94,58], [94,57], [94,56], [93,54], [93,52], [92,50], [91,47], [90,44], [89,41], [87,38], [85,34], [83,30], [81,26],
+  [79,22], [76,17], [73,12], [70,6], [67,1], [64,-5], [60,-11], [57,-17], [54,-23], [51,-29], [48,-35],
+];
+const SIGN_FRAMES = 165;
+
+/** Finish flag: Lakitu's path (a point every 6 frames), his poses and how long it lasts, measured in the original. */
+const FLAG_PATH: [number, number][] = [
+  [22,-48], [22,-48], [22,-47], [23,-46], [24,-44], [25,-42], [26,-39], [28,-35], [30,-31], [33,-26], [35,-21], [38,-15],
+  [41,-9], [45,-4], [49,0], [53,4], [57,7], [62,10], [67,12], [72,14], [77,15], [83,15], [89,15], [95,15],
+  [100,14], [105,12], [110,10], [115,7], [119,3], [123,-1], [127,-5], [130,-10], [133,-16], [136,-22], [139,-27], [141,-32],
+  [143,-36], [145,-39], [146,-42], [148,-45], [148,-46], [149,-48], [149,-48], [149,-48], [149,-48], [149,-47], [148,-46], [147,-43],
+  [146,-41], [144,-38], [142,-34], [140,-29], [137,-24], [135,-19], [132,-13], [128,-8], [125,-3], [121,1], [117,5], [112,8],
+  [108,11], [103,13], [97,14], [92,15], [86,16], [80,15], [75,14], [69,13], [64,11], [59,9], [55,6], [51,2],
+  [47,-2], [43,-7], [40,-12], [37,-18], [34,-24], [31,-29], [29,-33], [27,-37], [26,-40],
+];
+const FLAG_POSES = [0, 1, 2, 1, 2, 1];
+const FLAG_POSE_FRAMES = 17;
+const FLAG_FRAMES = 481;
+
+/** Frames a lap sign stays (down, hold, up). */
 const SHOW_FRAMES = 240;
 
 /** Start: comes down at 2/3 px per frame, overshoots to 7, settles at 5, leaves after the green, speeding up. */

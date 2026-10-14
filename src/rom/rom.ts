@@ -656,11 +656,13 @@ export class SmkRom {
         const addr = ch.sheet + (d[DRIVER_FRAME_TABLE + frame * 2] | (d[DRIVER_FRAME_TABLE + frame * 2 + 1] << 8)) - 0x2000;
         // 16x32 back/front views store one half of a symmetric 32x32 sprite.
         const mirrored = flags === 0x44;
+        // 16x24 back/front views: the kart is 24 wide; its right 8 columns are the left 8 mirrored.
+        const wing = flags === 0x43;
         // 16x8 entries are two 8x8 sprites stacked: head (first tile) above kart (second tile).
         const stacked = flags === 0x41;
         const w = stacked ? 8 : (flags >> 4) * 4;
         const h = stacked ? 16 : (flags & 0x0f) * 8;
-        const outW = mirrored ? w * 2 : w;
+        const outW = mirrored ? w * 2 : wing ? w + 8 : w;
         const px = new Uint8Array(outW * h * 4);
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
@@ -670,7 +672,7 @@ export class SmkRom {
               (((d[t + 16 + ty * 2] >> bit) & 1) << 2) | (((d[t + 16 + ty * 2 + 1] >> bit) & 1) << 3);
             if (ci === 0) continue;
             const c = colors[pal + ci];
-            for (const ox of mirrored ? [x, outW - 1 - x] : [x]) {
+            for (const ox of mirrored ? [x, outW - 1 - x] : wing && x < 8 ? [x, outW - 1 - x] : [x]) {
               const p = (y * outW + ox) * 4;
               px[p] = c[0]; px[p + 1] = c[1]; px[p + 2] = c[2]; px[p + 3] = 255;
             }

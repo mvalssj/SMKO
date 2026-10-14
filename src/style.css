@@ -120,3 +120,5 @@ button.character:disabled { opacity: 0.35; }
 }
 .fullscreen-btn:hover { opacity: 1; }
 
+/* Fades between screens: black layer whose opacity steps through the SNES's 16 brightness levels. */
+#fade { position: fixed; inset: 0; z-index: 1; background: #000; opacity: 0; pointer-events: none; }

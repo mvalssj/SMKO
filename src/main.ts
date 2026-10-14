@@ -12,6 +12,7 @@ import { BoardPlayer } from './menu/board-player';
 import { Ceremony } from './menu/ceremony';
 import { MUSIC, Sound } from './audio/sound';
 import { saveTrial, winCup } from './menu/progress';
+import { FADES, black, fadeIn, fadeOut, hold } from './fade';
 import type { Board } from './menu/results';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -27,6 +28,8 @@ let room: Extract<ServerMsg, { t: 'room' }> | null = null;
 
 /** Solo Grand Prix in progress: the 5 races of a cup against the 7 CPUs; 3 lives, one lost per race finished 5th or worse. */
 let gp: { tracks: TrackInfo[]; cc: Cc; players: PlayerInfo[]; round: number; points: Map<number, number>; lives: number } | null = null;
+/** Frames from crossing the line to the fade towards the results (measured). */
+const RESULTS_AFTER_FRAMES = 723;
 /** Plays the RESULTS / STANDINGS boards. */
 let boards: BoardPlayer | null = null;
 /** Driver frames of the last race, for the karts driving across the boards. */
@@ -44,6 +47,8 @@ function show(screen: 'rom' | 'menu' | 'game') {
   for (const s of ['rom', 'menu', 'game']) $(`screen-${s}`).hidden = s !== screen;
   if (screen === 'menu') menu?.show(); else menu?.hide();
   if (screen === 'menu' && sound) { sound.engine(0); sound.menu(); sound.music(MUSIC.menu); }
+  // Back in the menus: they come up from black.
+  if (screen === 'menu' && rom) void fadeIn(FADES.toSelect.in);
 }
 
 function localStorageGet(key: string): string | null {
@@ -96,6 +101,8 @@ async function loadRom(bytes: Uint8Array, remember: boolean) {
   const raceGfx = loadRaceGfx(rom);
   ceremony = raceGfx ? new Ceremony(rom, $('board') as HTMLCanvasElement, raceGfx) : null;
   show('menu');
+  black();
+  void fadeIn(FADES.titleIn);
   // Invite link (?sala=CODE): straight into that room (its lobby, or watching the race in progress).
   const invited = roomFromUrl();
   if (invited) void connect(invited);
@@ -151,7 +158,10 @@ async function loadSavedRom(): Promise<Uint8Array | null> {
 
 // ---------- Solo: Grand Prix and Time Trial ----------
 
-function startSolo(choice: { mode: 'gp' | 'tt'; cc: Cc; character: number; tracks: TrackInfo[] }) {
+async function startSolo(choice: { mode: 'gp' | 'tt'; cc: Cc; character: number; tracks: TrackInfo[] }) {
+  // The cup screen fades out and stays black while the course loads, as in the original.
+  await fadeOut(FADES.toRace.out);
+  await hold(FADES.toRace.black);
   const me: PlayerInfo = { id: 1, name: CHARACTER_NAMES[choice.character], character: choice.character, ready: true };
   if (choice.mode === 'tt') {
     gp = null;
@@ -183,8 +193,9 @@ function runSoloRace(track: TrackInfo, cc: Cc, players: PlayerInfo[], cpus: { id
   const check = () => {
     if (!race || net) return;
     if (!race.finished) { setTimeout(check, 250); return; }
-    // As in the original: the race goes on for a few seconds (lap times on screen), then the results.
-    setTimeout(() => { if (race && !net) finishSoloRace(race.results()); }, 5500);
+    // As in the original: the race goes on (Lakitu's flag, then the lap times) and the picture starts to fade
+    // to the results 723 frames after the line.
+    setTimeout(() => { if (race && !net) finishSoloRace(race.results()); }, RESULTS_AFTER_FRAMES * (1000 / 60));
   };
   check();
 }
@@ -260,17 +271,23 @@ const boardCup = () => (lastTrack?.battle ? -1 : Math.min(3, lastTrack?.cup ?? 0
 /** Award ceremony after the last race; `done` on Enter. */
 function showCeremony(top: number[], self: number, done: () => void) {
   if (!ceremony || !lastTrackData) { done(); return; }
+  void fadeIn(FADES.toBoards.in);
   ceremony.play(top, self, lastCc, Math.min(3, lastTrack?.cup ?? 0), lastDrivers, lastTrackData, done);
 }
 
 /** Shows the boards one after the other (Enter / X / Space skips); then `done`. `hint` is shown under them. */
-function playBoards(seq: Board[], hint: string, done: (() => void) | null, autoMs = 0) {
+async function playBoards(seq: Board[], hint: string, done: (() => void) | null, autoMs = 0) {
+  // The race view fades out, the boards fade in; leaving them fades out again.
+  await fadeOut(FADES.toBoards.out);
+  await hold(FADES.toBoards.black);
   race?.stop();
+  void fadeIn(FADES.toBoards.in);
   $('results').hidden = !hint;
   status('results-hint', hint);
   ($('btn-continue') as HTMLButtonElement).hidden = true;
   boards!.play(seq, lastDrivers, autoMs, () => {
-    if (done) done();
+    if (!done) return;
+    void fadeOut(FADES.toBoards.out).then(() => hold(FADES.toRace.black)).then(done);
   });
 }
 
@@ -423,6 +440,9 @@ function startRace(a: StartArgs) {
   boards?.stop();
   ceremony?.stop();
   show('game');
+  // Each race comes up from black.
+  black();
+  void fadeIn(FADES.toRace.in);
   $('results').hidden = true;
   status('results-hint', '');
   renderer ??= new Renderer($('floor') as HTMLCanvasElement, $('overlay') as HTMLCanvasElement, loadRaceGfx(rom!), $('place-fx') as HTMLCanvasElement);

@@ -50,6 +50,8 @@ const OBJ_COPIES: [number, number, number, number][] = [
   [0x10000, 0x0180, 0x0210, 0x1f60], // tiles FB-FF: traffic light bulbs
   [0x30000, 0x0800, 0x0c00, 0x2400], // tiles 120-13F: map heads, place digits 1-4
   [0x30000, 0x0c80, 0x0f00, 0x2800], // tiles 140-15B: place digits 5-8
+  [0x30000, 0x0c00, 0x1000, 0x3800], // tiles 1C0-1DF: finish order digits 1-8 (8x16: top 1C0+n, bottom 1D0+n)
+  [0x30000, 0x0000, 0x0400, 0x3c00], // tiles 1E0-1FF: the drivers' heads, other pose (finish order)
   [0x10000, 0x1200, 0x12c0, 0x2d00], // tiles 168-16D: sparkles
   [0x10000, 0x12c0, 0x1380, 0x2f00],
 ];

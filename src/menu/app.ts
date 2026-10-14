@@ -5,6 +5,7 @@ import { CHARACTER_NAMES } from '../../shared/protocol';
 import { CUP_NAMES, type SmkRom, type SpriteFrame, type TrackInfo } from '../rom/rom';
 import { createOam, renderFrame, SCREEN_H, SCREEN_W, setSprite, type Screen } from '../snes/ppu';
 import { MenuAssets } from './assets';
+import { FADES, transition } from '../fade';
 import { cc150Open, specialCupOpen, trialRecord } from './progress';
 import { boardTime } from './results';
 import {
@@ -185,7 +186,18 @@ export class MenuApp {
     this.padPrev = now;
   }
 
+  /** A fade between screens is running: keys wait (as in the original). */
+  private busy = false;
+
+  /** Changes screen with the original's fade out / black / fade in. */
+  private go(t: { out: number; black: number; in: number; wait?: number }, next: () => void) {
+    if (typeof document === 'undefined') { next(); return; } // tools running the menus in Node
+    this.busy = true;
+    void transition(t, next).finally(() => { this.busy = false; });
+  }
+
   private press(k: string) {
+    if (this.busy) return;
     const st = this.state;
     switch (st.s) {
       case 'title':
@@ -248,9 +260,9 @@ export class MenuApp {
         this.character = TV_CHARACTERS[st.tv];
         if (st.online) {
           this.events.onlineCharacter(this.character, true);
-          if (this.lobby?.isHost) this.state = this.hostPicks();
+          if (this.lobby?.isHost) this.go(FADES.toCup, () => { this.state = this.hostPicks(); });
           else this.waitForHost();
-        } else this.state = { s: 'cup', cursor: 0, online: false };
+        } else this.go(FADES.toCup, () => { this.state = { s: 'cup', cursor: 0, online: false }; });
       } else if (k === 'y') st.ok = false;
       return;
     }
@@ -332,7 +344,7 @@ export class MenuApp {
     if (this.mode === 'gp') summary.push(`${this.cc}¢ CLASS`);
     this.state = {
       s: 'confirm', summary, yes: true,
-      onYes: () => { this.state = { s: 'select', tv: TV_CHARACTERS.indexOf(this.character), ok: false, online: false }; },
+      onYes: () => this.go(FADES.toSelect, () => { this.state = { s: 'select', tv: TV_CHARACTERS.indexOf(this.character), ok: false, online: false }; }),
       onNo: () => this.modeBox(),
     };
   }
