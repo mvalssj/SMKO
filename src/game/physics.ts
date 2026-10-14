@@ -251,6 +251,9 @@ export interface StepEvents {
   lapCompleted: boolean;
   /** Hit a wall at speed (the bump sound). */
   bump: boolean;
+  /** Hop started / the kart came down from a hop or jump (sounds). */
+  hop: boolean;
+  land: boolean;
   /** Map tiles destroyed this step (Ghost Valley fences, Vanilla Lake ice blocks). */
   broken: number[];
 }
@@ -334,7 +337,7 @@ export function kartFacing(k: Pick<Kart, 'angle' | 'slide'>): number {
 }
 
 export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry, others: Bumper[], frame = 0): StepEvents {
-  const events: StepEvents = { lapCompleted: false, bump: false, broken: [] };
+  const events: StepEvents = { lapCompleted: false, bump: false, hop: false, land: false, broken: [] };
 
   if (k.star > 0) k.star--;
   if (k.ghost > 0) k.ghost--;
@@ -360,8 +363,8 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   // Hop on pressing L / R (on the ground); holding it through a turn is a power slide.
   const hopPress = input.drift && !k.driftHeld;
   k.driftHeld = input.drift;
-  if (hopPress && !airborne && k.hop === 0 && k.spin === 0) k.hop = HOP_FRAMES;
-  if (k.hop > 0) k.hop--;
+  if (hopPress && !airborne && k.hop === 0 && k.spin === 0) { k.hop = HOP_FRAMES; events.hop = true; }
+  if (k.hop > 0 && --k.hop === 0) events.land = true;
   const sliding = input.drift && steer !== 0;
 
   // Steering: the turn rate builds up frame by frame to the class' limit (needs a little speed; mirrored in reverse).
@@ -405,6 +408,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     k.air--;
     // Never land inside a wall: stay up a bit longer.
     if (k.air === 0 && terrainAt(track, k.x, k.y) === 'wall') k.air = 1;
+    if (k.air === 0) events.land = true;
     countLaps(k, track, startY, events);
     trackProgress(k, track, geo);
     return events;

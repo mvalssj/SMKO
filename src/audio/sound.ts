@@ -29,8 +29,13 @@ export const MUSIC = {
   lightning: 0x61,
 } as const;
 
-/** Sound effects (port 1), as the game sends them. */
-export const SFX = { coin: 0x24, itemBox: 0x2b, bump: 0x2d, skid: 0x2f } as const;
+/**
+ * Sound effects as the game sends them (caught with watchpoints on the game's sound queues while each event
+ * happened in the original): port 0 shares the music's queue, port 1 is a separate channel.
+ */
+export const SFX0 = { coin: 0x20, hop: 0x21, featherJump: 0x24, land: 0x25, shell: 0x2b, mushroom: 0x48, bump: 0x4d, boo: 0x57 } as const;
+/** Port 1 is a channel of continuous sounds: one plays until another id, or 0x2F (stop). */
+export const LOOP = { spin: 0x24, itemBox: 0x2b, brake: 0xa0, offroad: 0x2d, stop: 0x2f } as const;
 
 export class Sound {
   private ctx: AudioContext | null = null;
@@ -39,7 +44,9 @@ export class Sound {
   private boot: { ram: Uint8Array; entry: number };
   private ports = [0, 0, 0, 0];
   /** One-shot values for ports 0 and 1: held for two frames, then cleared. */
-  private pulse = [{ v: 0, n: 0 }, { v: 0, n: 0 }];
+  /** Port 0 queue (music commands and effects, one at a time, like the game's queue) and port 1's value. */
+  private queue: { v: number; n: number }[] = [];
+  private pulse1 = { v: 0, n: 0 };
   private set = -1;
   private starting: Promise<void> | null = null;
   /** Frames since the driver started: it ignores commands while it sets itself up. */
@@ -81,10 +88,22 @@ export class Sound {
   }
 
   /** Music command on port 0. */
-  music(cmd: number) { this.pulse[0] = { v: cmd, n: 30 }; }
+  music(cmd: number) { this.queue.push({ v: cmd, n: 4 }); }
+
+  /** Sound effect on port 0 (the music's queue). */
+  sfx0(id: number) { if (this.queue.length < 8) this.queue.push({ v: id, n: 2 }); }
 
   /** Sound effect on port 1. */
-  sfx(id: number) { this.pulse[1] = { v: id, n: 4 }; }
+  sfx(id: number) { this.pulse1 = { v: id, n: 4 }; }
+
+  /** The continuous sound on port 1 (null = none): sent when it changes. */
+  loop(id: number | null) {
+    const v = id ?? LOOP.stop;
+    if (v === this.loopNow) return;
+    this.loopNow = v;
+    this.sfx(v);
+  }
+  private loopNow: number = LOOP.stop;
 
   /** Engine pitch of player 1 / 2 (ports 2 and 3): 0 = off, about speed / 16 (game units). */
   engine(p1: number, p2 = 0) {
@@ -97,8 +116,10 @@ export class Sound {
     if (!this.node) return;
     if (++this.sinceBoot < DRIVER_SETUP_FRAMES) return;
     // Commands stay on the port for a while (the game holds them until the driver answers), then back to 0.
-    const ports = [...this.pulse.map((p) => (p.n > 0 ? p.v : 0)), this.ports[2], this.ports[3]];
-    for (const p of this.pulse) if (p.n > 0) p.n--;
+    const head = this.queue[0];
+    const ports = [head ? head.v : 0, this.pulse1.n > 0 ? this.pulse1.v : 0, this.ports[2], this.ports[3]];
+    if (head && --head.n <= 0) this.queue.shift();
+    if (this.pulse1.n > 0) this.pulse1.n--;
     this.node.port.postMessage({ type: 'ports', ports });
   }
 

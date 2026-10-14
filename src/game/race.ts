@@ -19,7 +19,7 @@ import { PLACE_RED, RaceHud, placeRainbow, type LakituShow } from './hud';
 import { CpuDriver, rubberBand } from './cpu';
 import { objectState } from './objects';
 import { ITEM_HIT_DISTANCE, OWNER_GRACE_FRAMES, advanceEntity, createEntity, type Entity } from './items';
-import { MUSIC, SFX, type Sound } from '../audio/sound';
+import { LOOP, MUSIC, SFX0, type Sound } from '../audio/sound';
 
 const STAR_FRAMES = 60 * 8;
 const GHOST_FRAMES = 60 * 5;
@@ -194,6 +194,7 @@ export class Race {
 
   stop() {
     this.o.sound?.engine(0);
+    this.o.sound?.loop(null);
     cancelAnimationFrame(this.raf);
     this.unsubs.forEach((u) => u());
   }
@@ -223,12 +224,11 @@ export class Race {
     const k = this.kart;
     switch (m.t) {
       case 'item':
-        if (m.roll) o.sound?.sfx(SFX.itemBox);
         this.item = m.item;
         this.rollingUntil = m.roll ? performance.now() + ROULETTE_MS : 0;
         break;
       case 'coins':
-        if (m.coins !== k.coins) o.sound?.sfx(SFX.coin);
+        if (m.coins > k.coins) o.sound?.sfx0(SFX0.coin);
         k.coins = m.coins;
         break;
       case 'tiles':
@@ -244,10 +244,10 @@ export class Race {
         break;
       case 'effect':
         if (m.id === o.selfId) {
-          if (m.kind === 'mushroom') k.boost = 60;
+          if (m.kind === 'mushroom') { k.boost = 60; o.sound?.sfx0(SFX0.mushroom); }
           else if (m.kind === 'star') k.star = STAR_FRAMES;
-          else if (m.kind === 'feather') featherJump(k);
-          else if (m.kind === 'ghost') k.ghost = GHOST_FRAMES;
+          else if (m.kind === 'feather') { featherJump(k); o.sound?.sfx0(SFX0.featherJump); }
+          else if (m.kind === 'ghost') { k.ghost = GHOST_FRAMES; o.sound?.sfx0(SFX0.boo); }
         } else if (m.kind === 'lightning') {
           o.sound?.music(MUSIC.lightning);
           if (!isInvincible(k)) {
@@ -273,6 +273,7 @@ export class Race {
     this.itemHeld = !!input.item;
     if (pressed && racing && this.item && now >= this.rollingUntil && k.fall === 0 && !this.finishedAt) {
       o.channel.send({ t: 'use', x: k.x, y: k.y, a: k.angle, back: input.brake });
+      if (this.item === 'greenShell' || this.item === 'redShell') o.sound?.sfx0(SFX0.shell);
       this.item = null;
     }
 
@@ -352,9 +353,9 @@ export class Race {
     const others = this.bumpers([...this.remote.sample(), ...this.cpus.map((c) => netState(c.id, c.kart))]
       .filter((r) => r.f === 0 && !(r.e & (EFFECT_GHOST | EFFECT_SHRUNK))));
     const lapBefore = this.kart.lap;
+    const spinBefore = this.kart.spin, boostBefore = this.kart.boost;
     const ev = stepKart(this.kart, input, this.o.track, this.geo, others, this.raceFrame(now));
-    if (ev.bump) this.o.sound?.sfx(SFX.bump);
-    else if (Math.abs(this.kart.slide) > 0.3 && this.kart.speed > 2 && this.raceFrame(now) % 8 === 0) this.o.sound?.sfx(SFX.skid);
+    this.kartSounds(ev, input, spinBefore, boostBefore, now);
     if (ev.broken.length) {
       this.o.renderer.updateTiles(this.o.track, ev.broken);
       this.o.net?.send({ t: 'break', tiles: ev.broken });
@@ -418,6 +419,21 @@ export class Race {
     if (this.frame % Math.round(60 / NET_HZ) === 0) {
       (o.net ?? o.channel).send({ t: 'cpu', karts: this.cpus.map((c) => netState(c.id, c.kart)) });
     }
+  }
+
+  /** Sounds of our own kart, as the game raises them. */
+  private kartSounds(ev: ReturnType<typeof stepKart>, input: ReturnType<typeof readInput>, _spinBefore: number, boostBefore: number, now: number) {
+    const s = this.o.sound, k = this.kart;
+    if (!s) return;
+    if (ev.bump) s.sfx0(SFX0.bump);
+    if (ev.hop) s.sfx0(SFX0.hop);
+    if (ev.land) s.sfx0(SFX0.land);
+    // Zipper panels: the same sound as a mushroom.
+    if (k.boost > boostBefore + 1 && boostBefore === 0 && k.boost === 45) s.sfx0(SFX0.mushroom);
+    // The continuous sound: spinning, the item roulette, the tyres screeching, driving on dirt.
+    const screech = (input.brake && k.speed > 1) || (Math.abs(k.slide) > 0.3 && k.speed > 2);
+    const offroad = k.speed > 1 && k.air === 0 && k.fall === 0 && terrainAt(this.o.track, k.x, k.y) === 'slow';
+    s.loop(k.spin > 0 ? LOOP.spin : now < this.rollingUntil ? LOOP.itemBox : screech ? LOOP.brake : offroad ? LOOP.offroad : null);
   }
 
   /** We now simulate the CPUs (their browser left): carry on from where the others last saw them. */

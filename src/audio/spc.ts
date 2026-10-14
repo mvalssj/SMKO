@@ -8,15 +8,26 @@ export const SPC_RATE = 32000;
 /** SPC700 clock: 1.024 MHz, i.e. 32 cycles per output sample. */
 const CYCLES_PER_SAMPLE = 32;
 
-/** Envelope / noise rate table: samples between steps for rates 0-31 (0 = never). */
+/**
+ * Envelope / noise timing: one global counter shared by all voices; a rate fires when
+ * (counter + offset) % period == 0 (period 0 = never), as the hardware does.
+ */
 const RATES = [0, 2048, 1536, 1280, 1024, 768, 640, 512, 384, 320, 256, 192, 160, 128, 96, 80, 64, 48, 40, 32, 24, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1];
+const RATE_OFFSETS = [1, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 0, 0];
+const COUNTER_RANGE = 2048 * 5 * 3;
 
-/** 4-point Gaussian-like interpolation kernel (512 entries, sum of the 4 taps ~ 2048). */
+/**
+ * The interpolation kernel (512 entries, the 4 taps sum to 2048). The hardware's curve is reproduced by a
+ * fitted polynomial (within 1 of it everywhere) instead of copying the chip's table.
+ */
+const GAUSS_FIT = [-0.202225537485, 11.4285576513, 293.288886013, 3127.53558003, -8654.91357147, 32886.0734559, -52258.2775551, 33426.664578, -7526.91436838];
 const GAUSS = (() => {
   const t = new Int32Array(512);
   for (let i = 0; i < 512; i++) {
-    const x = i / 256 - 2; // -2..2
-    t[i] = Math.round(Math.exp(-x * x * 1.05) * 1190);
+    const x = i / 511;
+    let v = 0;
+    for (let k = GAUSS_FIT.length - 1; k >= 0; k--) v = v * x + GAUSS_FIT[k];
+    t[i] = Math.max(0, Math.round(v));
   }
   return t;
 })();
@@ -63,7 +74,8 @@ export class Spc {
     brr: 0, pos: 0, buf: new Int16Array(19), counter: 0, env: 0, envMode: Env.Release, envTimer: 0, keyDelay: 0, out: 0, on: false,
   }));
   private noise = 0x4000;
-  private noiseTimer = 0;
+  /** Global envelope / noise counter. */
+  private counter = 0;
   private echoPos = 0;
   private echoHist = [new Int16Array(8), new Int16Array(8)];
   private echoHistPos = 0;
@@ -202,8 +214,11 @@ export class Spc {
 
   // ---------- CPU ----------
 
+  /** Cycles run past the last sample's share (paid back on the next one, so the clock stays exact). */
+  private debt = 0;
+
   private runCycles(n: number) {
-    let budget = n;
+    let budget = n - this.debt;
     while (budget > 0) {
       const before = this.cycles;
       if (this.stopped) this.cycles += 2;
@@ -213,6 +228,7 @@ export class Spc {
       budget -= used;
       this.tickTimers(used);
     }
+    this.debt = -budget;
   }
 
   private tickTimers(cycles: number) {
@@ -510,10 +526,9 @@ export class Spc {
     const koff = d[0x5c];
     if (flg & 0x80) { for (const vc of this.voices) { vc.envMode = Env.Release; vc.env = 0; } }
 
-    // Noise generator.
-    const nRate = RATES[flg & 31];
-    if (nRate && ++this.noiseTimer >= nRate) {
-      this.noiseTimer = 0;
+    // Global counter, then the noise generator.
+    if (--this.counter < 0) this.counter = COUNTER_RANGE - 1;
+    if (this.fires(flg & 31)) {
       const fb = (this.noise << 13) ^ (this.noise << 14);
       this.noise = ((fb & 0x4000) ^ (this.noise >> 1)) & 0x7fff;
     }
@@ -540,20 +555,23 @@ export class Spc {
         s = (GAUSS[255 - idx] * b[p - 3]) >> 11;
         s += (GAUSS[511 - idx] * b[p - 2]) >> 11;
         s += (GAUSS[256 + idx] * b[p - 1]) >> 11;
+        s = (s << 16) >> 16; // the hardware wraps before the last tap
         s += (GAUSS[idx] * b[p]) >> 11;
         s = clamp16(s) & ~1;
       }
 
-      this.envelope(vc, base);
-      const out = (s * vc.env) >> 11;
+      // Output with the current envelope; the envelope moves on after.
+      const out = ((s * vc.env) >> 11) & ~1;
       prevOut = out;
+      this.envelope(vc, base);
       d[base + 8] = vc.env >> 4;
       d[base + 9] = (out >> 8) & 0xff;
 
+      // Each voice is added and clamped in turn.
       const vl = (out * (d[base] << 24 >> 24)) >> 7;
       const vr = (out * (d[base + 1] << 24 >> 24)) >> 7;
-      mainL += vl; mainR += vr;
-      if (eon & (1 << i)) { echoL += vl; echoR += vr; }
+      mainL = clamp16(mainL + vl); mainR = clamp16(mainR + vr);
+      if (eon & (1 << i)) { echoL = clamp16(echoL + vl); echoR = clamp16(echoR + vr); }
 
       // Advance through the sample.
       vc.counter += Math.min(pitch, 0x3fff);
@@ -575,10 +593,12 @@ export class Spc {
     let firL = 0, firR = 0;
     for (let t = 0; t < 8; t++) {
       const c = (d[t * 16 + 0x0f] << 24) >> 24;
+      // The first 7 taps wrap at 16 bits, the last one is clamped (as the hardware sums them).
+      if (t === 7) { firL = (firL << 16) >> 16; firR = (firR << 16) >> 16; }
       firL += (this.echoHist[0][(hp + t + 1) & 7] * c) >> 6;
       firR += (this.echoHist[1][(hp + t + 1) & 7] * c) >> 6;
     }
-    firL = clamp16(firL); firR = clamp16(firR);
+    firL = clamp16(firL) & ~1; firR = clamp16(firR) & ~1;
     if (!(flg & 0x20)) {
       const efb = (d[0x0d] << 24) >> 24;
       const wl = clamp16(echoL + ((firL * efb) >> 7)) & ~1, wr = clamp16(echoR + ((firR * efb) >> 7)) & ~1;
@@ -590,8 +610,8 @@ export class Spc {
 
     const mvl = (d[0x0c] << 24) >> 24, mvr = (d[0x1c] << 24) >> 24;
     const evl = (d[0x2c] << 24) >> 24, evr = (d[0x3c] << 24) >> 24;
-    let l = clamp16(((clamp16(mainL) * mvl) >> 7) + ((firL * evl) >> 7));
-    let r = clamp16(((clamp16(mainR) * mvr) >> 7) + ((firR * evr) >> 7));
+    let l = clamp16(((mainL * mvl) >> 7) + ((firL * evl) >> 7));
+    let r = clamp16(((mainR * mvr) >> 7) + ((firR * evr) >> 7));
     if (flg & 0x40) l = r = 0;
     return [l, r];
   }
@@ -609,19 +629,21 @@ export class Spc {
         case Env.Attack: {
           const ar = adsr1 & 15;
           rate = ar * 2 + 1; step = ar === 15 ? 1024 : 32;
-          if (this.tick(vc, rate)) vc.env += step;
-          if (vc.env >= 0x7e0) { vc.env = Math.min(vc.env, 0x7ff); vc.envMode = Env.Decay; }
+          if (this.fires(rate)) vc.env += step;
+          if (vc.env >= 0x7e0) vc.envMode = Env.Decay;
+          if (vc.env > 0x7ff) vc.env = 0x7ff;
           return;
         }
         case Env.Decay: {
           rate = ((adsr1 >> 4) & 7) * 2 + 16;
-          if (this.tick(vc, rate)) vc.env -= ((vc.env - 1) >> 8) + 1;
-          if ((vc.env >> 8) <= (adsr2 >> 5)) vc.envMode = Env.Sustain;
+          if (this.fires(rate)) vc.env -= ((vc.env - 1) >> 8) + 1;
+          if ((vc.env >> 8) === (adsr2 >> 5)) vc.envMode = Env.Sustain;
+          if (vc.env < 0) vc.env = 0;
           return;
         }
         case Env.Sustain: {
           rate = adsr2 & 31;
-          if (this.tick(vc, rate)) vc.env -= ((vc.env - 1) >> 8) + 1;
+          if (this.fires(rate)) vc.env -= ((vc.env - 1) >> 8) + 1;
           if (vc.env < 0) vc.env = 0;
           return;
         }
@@ -630,7 +652,7 @@ export class Spc {
     // GAIN.
     if (!(gain & 0x80)) { vc.env = (gain & 0x7f) * 16; return; }
     rate = gain & 31;
-    if (!this.tick(vc, rate)) return;
+    if (!this.fires(rate)) return;
     switch ((gain >> 5) & 3) {
       case 0: vc.env -= 32; break;
       case 1: vc.env -= ((vc.env - 1) >> 8) + 1; break;
@@ -640,12 +662,10 @@ export class Spc {
     vc.env = Math.max(0, Math.min(0x7ff, vc.env));
   }
 
-  /** Envelope step timing for `rate` (0-31). */
-  private tick(vc: Voice, rate: number): boolean {
+  /** Whether `rate` (0-31) steps on this sample. */
+  private fires(rate: number): boolean {
     const period = RATES[rate];
-    if (!period) return false;
-    if (++vc.envTimer >= period) { vc.envTimer = 0; return true; }
-    return false;
+    return period > 0 && (this.counter + RATE_OFFSETS[rate]) % period === 0;
   }
 
   /** Decodes the 16 samples of the BRR block at vc.brr into buf[3..18] (buf[0..2] keep the previous ones). */
