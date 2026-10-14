@@ -1,0 +1,6 @@
+node_modules/
+dist/
+track-dump/
+# Never commit or publish ROMs
+*.sfc
+*.smc

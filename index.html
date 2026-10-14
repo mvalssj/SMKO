@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SMKO</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <main id="app">
+    <section id="screen-rom" class="screen">
+      <h1>SMKO <small>Super Mario Kart online</small></h1>
+      <label class="drop" id="drop">
+        <input type="file" id="rom-file" accept=".sfc,.smc" hidden />
+        <strong>Escolha a sua ROM do Super Mario Kart (.sfc / .smc)</strong>
+        <span>ou arraste o arquivo para cá. Ela fica só no seu navegador e não é enviada ao servidor.</span>
+      </label>
+      <p id="rom-status" class="status"></p>
+    </section>
+
+    <!-- The original menus, drawn from the ROM at the SNES resolution. -->
+    <section id="screen-menu" class="screen" hidden>
+      <div class="snes-frame"><canvas id="menu-canvas"></canvas></div>
+      <div id="menu-bar">
+        <span id="menu-room" hidden>Sala <strong id="menu-room-code"></strong> <button id="btn-copy" class="link">copiar link</button></span>
+        <span id="menu-status" class="status"></span>
+        <details class="help">
+          <summary>Controles</summary>
+          <p>Menus: setas movem · X / Espaço / Enter confirma · Z / Esc volta · no código da sala, digite as letras.<br />
+          Corrida: ↑ / W / X / Espaço acelera · ↓ / S / Z freia · ← → vira · Shift derrapa · E / Q / Ctrl usa o item
+          (segure freio para jogar o casco para trás). Controle (gamepad) também funciona.</p>
+        </details>
+      </div>
+    </section>
+
+    <section id="screen-game" class="screen" hidden>
+      <div id="viewport">
+        <canvas id="floor"></canvas>
+        <canvas id="overlay"></canvas>
+        <div id="hud">
+          <span id="hud-lap"></span>
+          <span id="hud-place"></span>
+          <span id="hud-time"></span>
+        </div>
+        <div id="hud-items">
+          <canvas id="hud-item" width="16" height="16"></canvas>
+          <span class="coins"><span class="coin-icon"></span><span id="hud-coins">0</span></span>
+        </div>
+        <canvas id="minimap" width="160" height="160"></canvas>
+        <div id="countdown"></div>
+        <div id="results" hidden>
+          <h2 id="results-title">Resultado</h2>
+          <ol id="results-list"></ol>
+          <h3 id="standings-title" hidden>Classificação</h3>
+          <ol id="standings-list"></ol>
+          <button id="btn-continue">Continuar</button>
+          <p id="results-hint" class="status"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+  <button id="btn-fullscreen" class="fullscreen-btn" title="Tela cheia (F11)">⛶ tela cheia</button>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
