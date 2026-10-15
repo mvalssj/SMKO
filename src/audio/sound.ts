@@ -87,6 +87,15 @@ export class Sound {
     this.loadSet(d[THEME_SETS + theme * 2] | (d[THEME_SETS + theme * 2 + 1] << 8));
   }
 
+  /**
+   * Frames between a command and hearing it (the browser's audio buffers): music cues are sent this much early
+   * so the start lights' beeps land where they do on the console.
+   */
+  get leadFrames() {
+    const c = this.ctx;
+    return c ? Math.round(((c.baseLatency || 0) + (c.outputLatency || 0)) * 60) : 0;
+  }
+
   /** Music command on port 0. */
   music(cmd: number) { this.queue.push({ v: cmd, n: 4 }); }
 

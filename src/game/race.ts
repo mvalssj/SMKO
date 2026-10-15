@@ -56,9 +56,13 @@ export interface RaceOptions {
   battle?: boolean;
 }
 
-/** Music cues of a race, in frames from the green light (measured in the original). */
-const MUSIC_INTRO_AT = -168;
-const MUSIC_LOOP_AT = 416;
+/**
+ * Music cues of a race, in frames from the green light (measured in the original: song 1 at -477, song 3 at
+ * -309, song 4 at +107). Song 3 carries the start lights' beeps, so it must start exactly 309 frames before green.
+ */
+const MUSIC_INTRO_AT = -477;
+const MUSIC_START_AT = -309;
+const MUSIC_LOOP_AT = 107;
 const MUSIC_AFTER_FINISH = 215;
 const FINAL_LAP_FANFARE = 118;
 const FINISH_SWING_FRAMES = 60;
@@ -463,7 +467,8 @@ export class Race {
   private stepSound(now: number) {
     const s = this.o.sound;
     if (!s) return;
-    const frame = this.raceFrame(now), k = this.kart;
+    // Music cues go out early by the audio latency, so what is heard lines up with the picture.
+    const frame = this.raceFrame(now) + s.leadFrames, k = this.kart;
     const cue = (name: string, cmd: number) => { if (this.musicCue !== name) { this.musicCue = name; s.music(cmd); } };
     if (k.lap >= TOTAL_LAPS && this.finalLapAt === null && !this.o.spectate) this.finalLapAt = frame;
     if (this.finishedAt) {
@@ -478,11 +483,12 @@ export class Race {
       else cue('final', MUSIC.finalLap);
     } else if (frame >= MUSIC_LOOP_AT || this.starTune) {
       cue('race', MUSIC.race);
-    } else if (frame >= 0) cue('start', MUSIC.raceStart);
-    else if (frame >= MUSIC_INTRO_AT) cue('intro', MUSIC.intro);
+    } else if (frame >= MUSIC_START_AT) cue('start', MUSIC.raceStart);
+    // The intro only when there is time for it before the start song (not when the race shows up just before).
+    else if (frame >= MUSIC_INTRO_AT && frame < MUSIC_START_AT - 30) cue('intro', MUSIC.intro);
     if (k.star === 0) this.starTune = false;
     // Engine: our kart's speed in game units / 16 (also while revving on the grid).
-    const revving = frame < 0 && readInput().accel;
+    const revving = this.raceFrame(now) < 0 && readInput().accel;
     s.engine(this.o.spectate ? 0 : revving ? 24 : Math.abs(k.speed) * 16);
   }
 
