@@ -40,6 +40,9 @@ export interface ObjectSprite {
   item?: boolean;
   /** Drawn mirrored (a shell spinning). */
   mirror?: boolean;
+  /** Its own pictures (the Battle Royale world has every course's objects); default: the track's. */
+  frames?: SpriteFrame[];
+  sizes?: SpriteFrame[][];
 }
 
 export interface Sprite {
@@ -94,8 +97,32 @@ attribute vec2 aPos;
 void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 `;
 
+/**
+ * The floor of a world bigger than one course (Battle Royale): uMap holds an atlas tile number per tile
+ * (red = low byte, green = high byte), uFill the atlas of 8x8 tiles; outside the world, tile `outside`.
+ */
+export interface WorldShape { cols: number; rows: number; atlasW: number; atlasH: number; outside: number }
+
+const floorFn = (world: WorldShape | null) => world ? `
+vec3 tileAt(float id, vec2 p) {
+  float per = ${world.atlasW / 8}.0;
+  vec2 a = vec2(mod(id, per), floor(id / per)) * 8.0 + floor(p) + 0.5;
+  return texture2D(uFill, a / vec2(${world.atlasW}.0, ${world.atlasH}.0)).rgb;
+}
+vec3 floorAt(vec2 w) {
+  vec2 t = floor(w / 8.0);
+  vec2 p = w - t * 8.0;
+  if (t.x < 0.0 || t.y < 0.0 || t.x >= ${world.cols}.0 || t.y >= ${world.rows}.0) return tileAt(${world.outside}.0, p);
+  vec4 c = texture2D(uMap, (t + 0.5) / vec2(${world.cols}.0, ${world.rows}.0));
+  return tileAt(floor(c.r * 255.0 + 0.5) + floor(c.g * 255.0 + 0.5) * 256.0, p);
+}` : `
+vec3 floorAt(vec2 w) {
+  if (w.x < 0.0 || w.y < 0.0 || w.x >= ${MAP_PX}.0 || w.y >= ${MAP_PX}.0) return texture2D(uFill, mod(w, 8.0) / 8.0).rgb;
+  return texture2D(uMap, w / ${MAP_PX}.0).rgb;
+}`;
+
 /** Fragment shader for a picture `w` pixels wide (the view widens, the scale stays the original's). */
-const frag = (w: number) => `
+const frag = (w: number, world: WorldShape | null = null) => `
 precision highp float;
 uniform sampler2D uMap;
 uniform sampler2D uFill;
@@ -106,10 +133,13 @@ uniform float uAngle;
 uniform float uFocal;
 uniform vec3 uSky;
 uniform vec2 uBgScroll;
-
-vec3 floorAt(vec2 w) {
-  if (w.x < 0.0 || w.y < 0.0 || w.x >= ${MAP_PX}.0 || w.y >= ${MAP_PX}.0) return texture2D(uFill, mod(w, 8.0) / 8.0).rgb;
-  return texture2D(uMap, w / ${MAP_PX}.0).rgb;
+uniform vec2 uMapOrigin;
+uniform vec3 uZone;
+${floorFn(world)}
+// Battle Royale: outside the safe area the floor is tinted (uZone = centre, radius; radius < 0 = none).
+vec3 zoned(vec3 c, vec2 w) {
+  if (uZone.z < 0.0 || distance(w, uZone.xy) <= uZone.z) return c;
+  return mix(c, vec3(0.42, 0.06, 0.36), 0.5);
 }
 
 void main() {
@@ -134,19 +164,21 @@ void main() {
     float lateral = (sx + 0.5 - ${w / 2}.0) * z / uFocal;
     vec2 fwd = vec2(sin(uAngle), -cos(uAngle));
     vec2 right = vec2(cos(uAngle), sin(uAngle));
-    c = floorAt(uCam + fwd * z + right * lateral);
+    vec2 wp = uCam + fwd * z + right * lateral;
+    c = zoned(floorAt(wp), wp);
   } else if (sy >= ${MAP_TOP}.0 && sy < ${MAP_BOTTOM}.0) {
     // Course map: north up, leaning away from the viewer.
     float t = (sy - ${MAP_TOP}.0 + 0.5) / ${MAP_BOTTOM - MAP_TOP}.0;
     float wy = ${MAP_PX}.0 * t * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
     float scale = ${MAP_SCALE} * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
-    c = floorAt(vec2(${MAP_PX / 2}.0 + (sx + 0.5 - ${w / 2}.0) * scale, wy));
+    vec2 mp = uMapOrigin + vec2(${MAP_PX / 2}.0 + (sx + 0.5 - ${w / 2}.0) * scale, wy);
+    c = zoned(floorAt(mp), mp);
   }
   gl_FragColor = vec4(c, 1.0);
 }
 `;
 
-const UNIFORMS = ['uMap', 'uFill', 'uBgFront', 'uBgBack', 'uCam', 'uAngle', 'uFocal', 'uSky', 'uBgScroll'];
+const UNIFORMS = ['uMap', 'uFill', 'uBgFront', 'uBgBack', 'uCam', 'uAngle', 'uFocal', 'uSky', 'uBgScroll', 'uMapOrigin', 'uZone'];
 
 export interface DriverFrames {
   /** frames[distanceRow][angleSlot] */
@@ -181,6 +213,12 @@ export class Renderer {
   width = SCREEN_W;
   /** Where the original 256 columns start (the HUD is drawn there). */
   pad = 0;
+  /** World mode (Battle Royale): the floor's shape, or null for one course. */
+  private world: WorldShape | null = null;
+  /** Top-left of the 1024 x 1024 area the course map (lower screen) shows: a course shows whole. */
+  mapOrigin = { x: 0, y: 0 };
+  /** Battle Royale safe area (floor outside it is tinted), or null. */
+  zone: { x: number; y: number; r: number } | null = null;
 
   constructor(private floorCanvas: HTMLCanvasElement, private overlayCanvas: HTMLCanvasElement, private gfx: RaceGfx | null, private placeCanvas?: HTMLCanvasElement, width = SCREEN_W) {
     this.placeFx = placeCanvas?.getContext('2d') ?? null;
@@ -218,7 +256,7 @@ export class Renderer {
 
     const gl = this.gl;
     if (this.prog) gl.deleteProgram(this.prog);
-    this.prog = link(gl, VERT, frag(width));
+    this.prog = link(gl, VERT, frag(width, this.world));
     gl.useProgram(this.prog);
     for (const name of UNIFORMS) this.uniforms[name] = gl.getUniformLocation(this.prog, name);
     const loc = gl.getAttribLocation(this.prog, 'aPos');
@@ -227,14 +265,26 @@ export class Renderer {
   }
 
   /** Loads a track and the driver frames (already colored with its palettes) for the characters in the race. */
-  setTrack(track: Track, drivers: Map<number, DriverSprites | null>, itemFrames: SpriteFrame[] = []) {
+  setTrack(track: Track, drivers: Map<number, DriverSprites | null>, itemFrames: SpriteFrame[] = [], world: (WorldShape & { ids: Uint16Array; atlas: Uint8Array }) | null = null) {
     this.itemFrames = itemFrames;
     const gl = this.gl;
-    upload(gl, this.mapTex, MAP_PX, MAP_PX, track.pixels);
-    upload(gl, this.fillTex, 8, 8, track.fill);
-    upload(gl, this.bgFrontTex, BG_FRONT_W, BG_HEIGHT, track.background.front);
-    upload(gl, this.bgBackTex, BG_BACK_W, BG_HEIGHT, track.background.back);
-    this.sky = track.backColor.map((v) => v / 255);
+    const shape = world && { cols: world.cols, rows: world.rows, atlasW: world.atlasW, atlasH: world.atlasH, outside: world.outside };
+    if (JSON.stringify(shape) !== JSON.stringify(this.world)) {
+      this.world = shape;
+      this.setWidth(this.width, true);
+    }
+    this.mapOrigin = { x: 0, y: 0 };
+    this.zone = null;
+    if (world) {
+      const ids = new Uint8Array(world.cols * world.rows * 4);
+      for (let i = 0; i < world.ids.length; i++) { ids[i * 4] = world.ids[i] & 255; ids[i * 4 + 1] = world.ids[i] >> 8; ids[i * 4 + 3] = 255; }
+      upload(gl, this.mapTex, world.cols, world.rows, ids);
+      upload(gl, this.fillTex, world.atlasW, world.atlasH, world.atlas);
+    } else {
+      upload(gl, this.mapTex, MAP_PX, MAP_PX, track.pixels);
+      upload(gl, this.fillTex, 8, 8, track.fill);
+    }
+    this.setSky(track);
 
     this.objectFrames = track.objectFrames;
     this.objectSizes = track.objectSizes;
@@ -249,10 +299,27 @@ export class Renderer {
     }
   }
 
+  /** The sky band's two scenery layers and the color behind them (the world changes them course by course). */
+  setSky(sky: Pick<Track, 'background' | 'backColor'>) {
+    const gl = this.gl;
+    upload(gl, this.bgFrontTex, BG_FRONT_W, BG_HEIGHT, sky.background.front);
+    upload(gl, this.bgBackTex, BG_BACK_W, BG_HEIGHT, sky.background.back);
+    this.sky = sky.backColor.map((v) => v / 255);
+  }
+
   /** Re-uploads map tiles that changed (broken blocks). */
   updateTiles(track: Track, tiles: number[]) {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.mapTex);
+    if (track.world) {
+      const px = new Uint8Array(4);
+      for (const i of tiles) {
+        const id = track.world.ids[i];
+        px[0] = id & 255; px[1] = id >> 8; px[3] = 255;
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, i % track.world.cols, Math.floor(i / track.world.cols), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      }
+      return;
+    }
     const buf = new Uint8Array(8 * 8 * 4);
     for (const i of tiles) {
       const tx = (i % 128) * 8, ty = Math.floor(i / 128) * 8;
@@ -283,6 +350,8 @@ export class Renderer {
     // One full turn scrolls each layer by its own width; the back layer is half as wide, so it moves slower.
     const turn = cam.angle / (Math.PI * 2);
     gl.uniform2f(u.uBgScroll, turn * BG_FRONT_W, turn * BG_BACK_W);
+    gl.uniform2f(u.uMapOrigin, this.mapOrigin.x, this.mapOrigin.y);
+    gl.uniform3f(u.uZone, this.zone?.x ?? 0, this.zone?.y ?? 0, this.zone ? this.zone.r : -1);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     const layer = this.layer;
@@ -296,7 +365,8 @@ export class Renderer {
     // The course map is centred in the picture, the HUD in the original's 256 columns.
     layer.ox = this.pad;
     for (const m of markers) {
-      const p = mapPoint(m.x, m.y);
+      const p = mapPoint(m.x - this.mapOrigin.x, m.y - this.mapOrigin.y);
+      if (p && (p.x < -8 || p.x > SCREEN_W + 8)) continue;
       if (p) this.hud!.head(m.character, p.x, p.y, m.palette);
     }
     layer.setClip();
@@ -346,14 +416,15 @@ export function drawRaceView(layer: Layer, cam: Camera, sprites: Sprite[], objec
     const ground = HORIZON + (CAM_HEIGHT * FOCAL) / item.z;
     if ('object' in item) {
       const o = item.s;
-      const frames = o.item ? set.itemFrames : set.objectFrames;
+      const frames = o.item ? set.itemFrames : o.frames ?? set.objectFrames;
       const img = frames[o.frame] ?? frames[0];
       if (!img) continue;
       // 16x16 frames: objects are drawn 32px at the chase distance (like the karts), items 16px.
       const size = Math.round((o.item ? 16 : 32) * (CHASE_DISTANCE / item.z));
       if (size < 1) continue;
       // Further away the game switches to the object's smaller hand-drawn sizes, drawn 1:1.
-      const sizes = !o.item ? set.objectSizes?.[Math.min(o.frame, (set.objectSizes?.length ?? 1) - 1)] : undefined;
+      const allSizes = o.sizes ?? set.objectSizes;
+      const sizes = !o.item ? allSizes?.[Math.min(o.frame, (allSizes?.length ?? 1) - 1)] : undefined;
       if (sizes?.length && size <= 16) {
         let best = sizes[0];
         for (const f of sizes) if (Math.abs(f.h - size) < Math.abs(best.h - size)) best = f;

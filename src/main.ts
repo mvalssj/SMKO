@@ -6,6 +6,9 @@ import { loadRaceGfx } from './rom/race-gfx';
 import { NetClient } from './net/client';
 import { LocalChannel } from './net/local';
 import { Race, formatTime } from './game/race';
+import { buildWorld } from './royale/world';
+import { RoyaleState } from './royale/state';
+import { ROYALE_PLAYERS } from '../shared/royale';
 import { Renderer, SCREEN_W } from './game/renderer';
 import { setupControls } from './controls';
 import { MenuApp, type LobbyView } from './menu/app';
@@ -88,6 +91,7 @@ async function loadRom(bytes: Uint8Array, remember: boolean) {
         odds: tracks.map((t) => rom!.itemOdds(t)),
       }),
       onlineLeave: leaveOnline,
+      royale: ({ character }) => void startRoyale(character),
     });
   } catch (e) {
     rom = null;
@@ -423,6 +427,7 @@ $('btn-copy').addEventListener('click', async () => {
 // ---------- Race ----------
 
 interface StartArgs {
+  royale?: RoyaleState;
   track: ReturnType<SmkRom['loadTrack']>;
   cc: Cc;
   players: PlayerInfo[];
@@ -461,9 +466,64 @@ function startRace(a: StartArgs) {
     hud: { note: $('hud-note') },
     lives: a.lives,
     battle: a.battle,
+    royale: a.royale,
     sound,
   });
   race.start();
+}
+
+// ---------- Battle Royale ----------
+
+/** A Battle Royale is on (Esc leaves to the title instead of the cup screen). */
+let royaleOn = false;
+
+/**
+ * Solo Battle Royale: this player and 99 computer drivers in the world of every course. The world is built
+ * while the screen is black (the course loading of the original).
+ */
+async function startRoyale(character: number) {
+  await fadeOut(FADES.toRace.out);
+  const t0 = performance.now();
+  const world = buildWorld(rom!);
+  await hold(Math.max(0, FADES.toRace.black - (performance.now() - t0) / (1000 / 60)));
+  const seed = Math.floor(Math.random() * 2 ** 31);
+  const state = new RoyaleState(world, seed);
+  const me: PlayerInfo = { id: 1, name: CHARACTER_NAMES[character], character, ready: true };
+  const bots: PlayerInfo[] = Array.from({ length: ROYALE_PLAYERS - 1 }, (_, i) => {
+    const c = (character + 1 + i) % CHARACTER_NAMES.length;
+    return { id: CPU_ID_BASE + i, name: CHARACTER_NAMES[c], character: c, ready: true, cpu: true };
+  });
+  // Starting places: shuffled, so you never know who is next door.
+  const slots = Array.from({ length: ROYALE_PLAYERS }, (_, i) => i).sort(() => Math.random() - 0.5);
+  const battleCourse = rom!.tracks.find((t) => t.battle)!;
+  solo?.close();
+  solo = new LocalChannel(1, rom!.itemOdds(battleCourse), COUNTDOWN_MS, bots.map((b) => b.id), seed);
+  gp = null;
+  royaleOn = true;
+  lastTrack = null;
+  startRace({
+    track: world, royale: state, cc: 100, players: [me, ...bots], items: true, battle: true, selfId: 1, slot: slots[0],
+    cpus: bots.map((b, i) => ({ id: b.id, slot: slots[i + 1], skill: 0.6 + Math.random() * 0.4 })),
+    startInMs: COUNTDOWN_MS, online: false,
+  });
+  // Over: the winner's flag (or our place) for a while, then back to the title.
+  const check = () => {
+    if (!race || net || !royaleOn) return;
+    const r = race.royaleResult;
+    if (!r || r.winner === null) { setTimeout(check, 250); return; }
+    status('results-hint', r.place === 1 ? 'VOCÊ VENCEU! Pressione Enter' : `Você ficou em ${r.place}º. Pressione Enter`);
+    setTimeout(() => {
+      if (!race || !royaleOn) return;
+      $('results').hidden = false;
+      onContinue = () => leaveRoyale();
+    }, 4000);
+  };
+  check();
+}
+
+function leaveRoyale() {
+  royaleOn = false;
+  void fadeOut(FADES.toBoards.out).then(() => { endRace(); menu?.toTitle(); });
 }
 
 /** Online GP points before the last race (for the "(+n)" on the standings). */
@@ -492,6 +552,7 @@ function endRace() {
 
 addEventListener('keydown', (e) => {
   // Esc leaves a solo race (back to the menu).
+  if (e.code === 'Escape' && race && !net && royaleOn) { leaveRoyale(); return; }
   if (e.code === 'Escape' && race && !net) { gp = null; endRace(); menu?.toCupSelect(); }
 });
 

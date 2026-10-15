@@ -127,6 +127,31 @@ export class RaceHud {
     L.sprite(digit(Math.max(0, Math.min(9, n))), 206, y, PAL_HUD);
   }
 
+  /** Battle Royale: drivers still in (kart icon, "x", up to three digits), where a GP shows the lives. */
+  alive(n: number) {
+    const L = this.layer, y = 84;
+    const digit = (d: number) => (d < 5 ? 0xa7 + d : 0xb7 + d - 5);
+    const text = String(Math.max(0, Math.min(999, n)));
+    const x = 214 - (text.length - 1) * 8;
+    L.sprite(0x5e, x - 24, y, PAL_HUD);
+    L.sprite(0x5f, x - 16, y, PAL_HUD);
+    L.sprite(0x4e, x - 8, y, PAL_HUD);
+    [...text].forEach((ch, i) => L.sprite(digit(+ch), x + i * 8, y, PAL_HUD));
+  }
+
+  /** A line in the race's menu font (digits and A-Z) on a black strip, centred on x. */
+  text(str: string, cx: number, y: number) {
+    const font = this.gfx?.font;
+    if (!font) return;
+    const L = this.layer, w = str.length * 8, x0 = Math.round(cx - w / 2);
+    L.rect(x0 - 4, y - 2, w + 8, 12, [0, 0, 0]);
+    [...str].forEach((ch, i) => {
+      const c = ch.charCodeAt(0);
+      const t = c >= 48 && c <= 57 ? c - 48 : c >= 65 && c <= 90 ? 0x0a + c - 65 : -1;
+      if (t >= 0) L.fontTile(font, t, x0 + i * 8, y, FONT_COLORS);
+    });
+  }
+
   /** After the finish: each lap's time and the total, in the menu font, over the race view. */
   lapTimes(laps: (number | null)[], totalMs: number) {
     const font = this.gfx?.font;

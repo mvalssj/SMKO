@@ -130,15 +130,15 @@ export type ClientMsg =
   | { t: 'cpuDrop'; cpu: number; x: number; y: number; a: number; kind: EntityKind }
   | { t: 'break'; tiles: number[] }
   /** Drove over an item box (its map tiles). */
-  | { t: 'box'; tiles: number[] }
+  | { t: 'box'; tiles: number[]; cpu?: number }
   /** Drove over a coin (its map tiles). */
-  | { t: 'coin'; tiles: number[] }
+  | { t: 'coin'; tiles: number[]; cpu?: number }
   /** Use the held item; `back` throws a shell behind (bananas always go behind). */
-  | { t: 'use'; x: number; y: number; a: number; back: boolean }
+  | { t: 'use'; x: number; y: number; a: number; back: boolean; cpu?: number }
   /** This client's kart (or, from the host, CPU `cpu`) was hit by an entity. */
   | { t: 'hit'; entity: number; cpu?: number }
   /** Battle: this player lost a balloon to something that isn't a thrown item (a star kart, a fall). */
-  | { t: 'pop' };
+  | { t: 'pop'; cpu?: number };
 
 export type ServerMsg =
   | { t: 'welcome'; id: number }
@@ -147,6 +147,9 @@ export type ServerMsg =
   | { t: 'race'; track: number; laps: number; grid: number[]; startInMs: number; players: PlayerInfo[]; cpuHost: number; cc: Cc; round: number; rounds: number; battle?: boolean }
   /** Battle: a player's balloons (0 = out). */
   | { t: 'balloons'; id: number; n: number }
+  /** Battle Royale: a player is out (finishing `place`), and the match is over. */
+  | { t: 'royaleOut'; id: number; place: number }
+  | { t: 'royaleOver'; winner: number }
   /** The player now simulating the CPUs (the previous one left mid-race). */
   | { t: 'cpuHost'; id: number }
   | { t: 'states'; karts: KartNetState[] }
@@ -155,8 +158,9 @@ export type ServerMsg =
   | { t: 'results'; results: ResultEntry[]; standings: Standing[]; round: number; rounds: number; final: boolean }
   | { t: 'break'; tiles: number[] }
   /** Your held item (null = none). `roll` = show the roulette before it can be used. */
-  | { t: 'item'; item: ItemKind | null; roll?: boolean }
-  | { t: 'coins'; coins: number }
+  /** `cpu`: the news is for that computer driver (one this client simulates), not for the player. */
+  | { t: 'item'; item: ItemKind | null; roll?: boolean; cpu?: number }
+  | { t: 'coins'; coins: number; cpu?: number }
   /** Item box / coin tiles taken (restore = false) or back (restore = true). */
   | { t: 'tiles'; tiles: number[]; restore: boolean }
   | { t: 'spawn'; e: NetEntity }

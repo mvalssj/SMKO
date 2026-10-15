@@ -12,8 +12,8 @@ import {
   TV_CHARACTERS, TV_SPRITE_POS, bigSpriteText, buildCupMap, cupBorder, cupTitle, okPrompt, spriteText, tvChosen, tvMarker,
 } from './draw';
 
-/** gp / tt: 1P GAME; gp / match / battle: the online room (the original's 2P GAME modes). */
-export type Mode = 'gp' | 'tt' | 'match' | 'battle';
+/** gp / tt: 1P GAME; gp / match / battle: the online room (the original's 2P GAME modes); royale: Battle Royale. */
+export type Mode = 'gp' | 'tt' | 'match' | 'battle' | 'royale';
 export type Cc = 50 | 100 | 150;
 
 export interface MenuEvents {
@@ -27,6 +27,8 @@ export interface MenuEvents {
   onlineStart(choice: { mode: Mode; cc: Cc; tracks: TrackInfo[] }): void;
   /** Left the online lobby. */
   onlineLeave(): void;
+  /** Battle Royale with this driver (100 karts in the world of every course). */
+  royale(choice: { character: number }): void;
 }
 
 /** Room state pushed in by the online code while in the lobby. */
@@ -243,7 +245,8 @@ export class MenuApp {
           this.events.onlineCharacter(this.character, true);
           if (this.lobby?.isHost) this.go(FADES.toCup, () => { this.state = this.hostPicks(); });
           else this.waitForHost();
-        } else this.go(FADES.toCup, () => { this.state = { s: 'cup', cursor: 0, online: false }; });
+        } else if (this.mode === 'royale') this.events.royale({ character: this.character });
+        else this.go(FADES.toCup, () => { this.state = { s: 'cup', cursor: 0, online: false }; });
       } else if (k === 'y') st.ok = false;
       return;
     }
@@ -299,7 +302,19 @@ export class MenuApp {
   }
 
   private mainBox() {
-    this.box(['1P GAME', 'ONLINE GAME'], (i) => (i === 0 ? this.modeBox() : this.onlineBox()));
+    this.box(['1P GAME', 'ONLINE GAME', 'BATTLE ROYALE'], (i) => (i === 0 ? this.modeBox() : i === 1 ? this.onlineBox() : this.royaleBox()));
+  }
+
+  /** Battle Royale: straight to the drivers (one size of everything: 100cc, items on, 3 balloons). */
+  private royaleBox() {
+    this.online = false;
+    this.mode = 'royale';
+    this.cc = 100;
+    this.state = {
+      s: 'confirm', summary: ['BATTLE ROYALE', '100 DRIVERS'], yes: true,
+      onYes: () => this.go(FADES.toSelect, () => { this.state = { s: 'select', tv: TV_CHARACTERS.indexOf(this.character), ok: false, online: false }; }),
+      onNo: () => this.mainBox(),
+    };
   }
 
   private modeBox() {

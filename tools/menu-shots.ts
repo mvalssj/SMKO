@@ -23,6 +23,7 @@ const app = new MenuApp(rom, canvas, {
   onlineCharacter: (c) => log.push(`online personagem ${c}`),
   onlineStart: (c) => log.push(`online iniciar ${c.mode} ${c.tracks.length} pistas`),
   onlineLeave: () => log.push('online sair'),
+  royale: (c) => log.push(`royale personagem=${c.character}`),
 });
 const a = app as any;
 let n = 0;

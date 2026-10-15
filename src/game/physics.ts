@@ -176,9 +176,51 @@ export function terrainOf(genre: number): Terrain {
   }
 }
 
+/** Floor size in tiles (a course is 128 x 128; the Battle Royale world is bigger). */
+export const floorCols = (t: Track) => t.world?.cols ?? MAP_SIZE;
+export const floorRows = (t: Track) => t.world?.rows ?? MAP_SIZE;
+
 export function terrainAt(track: Track, x: number, y: number): Terrain {
-  if (x < 0 || y < 0 || x >= MAP_PX || y >= MAP_PX) return 'wall';
-  return terrainOf(track.genres[Math.floor(y / TILE) * MAP_SIZE + Math.floor(x / TILE)]);
+  const cols = floorCols(track);
+  if (x < 0 || y < 0 || x >= cols * TILE || y >= floorRows(track) * TILE) return 'wall';
+  return terrainOf(track.genres[Math.floor(y / TILE) * cols + Math.floor(x / TILE)]);
+}
+
+/** Genre of the tile under a world position (0 outside the floor). */
+export function genreAt(track: Track, x: number, y: number): number {
+  const cols = floorCols(track), tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
+  if (tx < 0 || ty < 0 || tx >= cols || ty >= floorRows(track)) return 0;
+  return track.genres[ty * cols + tx];
+}
+
+/** Copies tile `src` over tile `dst` (terrain and picture). */
+function copyTile(track: Track, dst: number, src: number) {
+  track.genres[dst] = track.genres[src];
+  if (track.world) { track.world.ids[dst] = track.world.ids[src]; return; }
+  const sx = (src % MAP_SIZE) * TILE, sy = Math.floor(src / MAP_SIZE) * TILE;
+  const tx = (dst % MAP_SIZE) * TILE, ty = Math.floor(dst / MAP_SIZE) * TILE;
+  for (let py = 0; py < TILE; py++) {
+    const from = ((sy + py) * MAP_PX + sx) * 4;
+    track.pixels.copyWithin(((ty + py) * MAP_PX + tx) * 4, from, from + TILE * 4);
+  }
+}
+
+/** The nearest drivable tile around tile `i` (up to 4 tiles away) that `ok` accepts, or -1. */
+function nearbyFloor(track: Track, i: number, ok: (genre: number) => boolean): number {
+  const cols = floorCols(track), rows = floorRows(track);
+  const tx = i % cols, ty = Math.floor(i / cols);
+  for (let r = 1; r <= 4; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const x = tx + dx, y = ty + dy;
+        if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
+        const g = track.genres[y * cols + x];
+        const t = terrainOf(g);
+        if ((t === 'road' || t === 'slow' || t === 'ice') && ok(g)) return y * cols + x;
+      }
+    }
+  }
+  return -1;
 }
 
 /** Start grid slot -> position. Slot 0 is pole position. */
@@ -188,6 +230,7 @@ export function gridPosition(track: Track, slot: number): { x: number; y: number
   }
   // Battle courses have no GP grid: spread karts around the AI path, each facing along it.
   const n = track.path.length;
+  if (n === 0) return { x: 512, y: 512, angle: 0 };
   const i = Math.floor((slot * n) / 8) % n;
   const p = track.path[i], q = track.path[(i + 1) % n];
   return { x: p.x, y: p.y, angle: Math.atan2(q.x - p.x, -(q.y - p.y)) };
@@ -265,14 +308,15 @@ const BREAKABLE: number[] = [Genre.FrailBlock, Genre.IceBlock];
  * Returns the tile indices, in the order they were replaced (replay them with applyBreak).
  */
 function breakBlocks(track: Track, tx: number, ty: number): number[] {
-  const g = track.genres[ty * MAP_SIZE + tx];
+  const cols = floorCols(track), rows = floorRows(track);
+  const g = track.genres[ty * cols + tx];
   const tiles: number[] = [];
   const seen = new Set<number>();
   const queue = [[tx, ty]];
   while (queue.length) {
     const [x, y] = queue.shift()!;
-    const i = y * MAP_SIZE + x;
-    if (x < 0 || y < 0 || x >= MAP_SIZE || y >= MAP_SIZE || seen.has(i)) continue;
+    const i = y * cols + x;
+    if (x < 0 || y < 0 || x >= cols || y >= rows || seen.has(i)) continue;
     seen.add(i);
     if (track.genres[i] !== g || Math.max(Math.abs(x - tx), Math.abs(y - ty)) > 1) continue;
     tiles.push(i);
@@ -284,27 +328,10 @@ function breakBlocks(track: Track, tx: number, ty: number): number[] {
 
 export function applyBreak(track: Track, tiles: number[]) {
   for (const i of tiles) {
-    const tx = i % MAP_SIZE, ty = Math.floor(i / MAP_SIZE);
     if (!BREAKABLE.includes(track.genres[i])) continue;
-    // Copy the closest drivable tile (genre + pixels).
-    let src = -1;
-    for (let r = 1; r <= 4 && src < 0; r++) {
-      for (let dy = -r; dy <= r && src < 0; dy++) {
-        for (let dx = -r; dx <= r && src < 0; dx++) {
-          const x = tx + dx, y = ty + dy;
-          if (x < 0 || y < 0 || x >= MAP_SIZE || y >= MAP_SIZE) continue;
-          const t = terrainOf(track.genres[y * MAP_SIZE + x]);
-          if (t === 'road' || t === 'slow' || t === 'ice') src = y * MAP_SIZE + x;
-        }
-      }
-    }
-    if (src < 0) continue;
-    track.genres[i] = track.genres[src];
-    const sx = (src % MAP_SIZE) * TILE, sy = Math.floor(src / MAP_SIZE) * TILE;
-    for (let py = 0; py < TILE; py++) {
-      const from = ((sy + py) * MAP_PX + sx) * 4;
-      track.pixels.copyWithin(((ty * TILE + py) * MAP_PX + tx * TILE) * 4, from, from + TILE * 4);
-    }
+    // Copy the closest drivable tile (genre + picture).
+    const src = nearbyFloor(track, i, () => true);
+    if (src >= 0) copyTile(track, i, src);
   }
 }
 
@@ -403,8 +430,8 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
 
   if (airborne) {
     // Ballistic: keep the take-off velocity, ignore walls and holes until landing.
-    k.x = Math.min(MAP_PX - 1, Math.max(0, k.x + k.vx));
-    k.y = Math.min(MAP_PX - 1, Math.max(0, k.y + k.vy));
+    k.x = Math.min(floorCols(track) * TILE - 1, Math.max(0, k.x + k.vx));
+    k.y = Math.min(floorRows(track) * TILE - 1, Math.max(0, k.y + k.vy));
     k.air--;
     // Never land inside a wall: stay up a bit longer.
     if (k.air === 0 && terrainAt(track, k.x, k.y) === 'wall') k.air = 1;
@@ -456,7 +483,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   const blocked = (x: number, y: number) => {
     if (terrainAt(track, x, y) !== 'wall') return false;
     const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
-    if (!BREAKABLE.includes(track.genres[ty * MAP_SIZE + tx]) || Math.abs(k.speed) < 0.8) return true;
+    if (!BREAKABLE.includes(track.genres[ty * floorCols(track) + tx]) || Math.abs(k.speed) < 0.8) return true;
     events.broken.push(...breakBlocks(track, tx, ty));
     k.speed *= 0.5;
     return false;
@@ -487,6 +514,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   for (let i = 0; i < track.objects.length; i++) {
     const o = track.objects[i];
     const dx = k.x - o.x, dy = k.y - o.y;
+    if (dx > OBJECT_HIT_DISTANCE || dx < -OBJECT_HIT_DISTANCE || dy > OBJECT_HIT_DISTANCE || dy < -OBJECT_HIT_DISTANCE) continue;
     const d = Math.hypot(dx, dy);
     if (d >= OBJECT_HIT_DISTANCE) continue;
     const st = objectState(o.kind, i, frame);
@@ -516,7 +544,8 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   } else if (now === 'boost') {
     k.boost = 45;
     k.mtBoost = 0;
-  } else if (now === 'oil' && k.spin === 0) {
+  } else if (now === 'oil' && k.spin === 0 && k.speed > 1) {
+    // (Driving onto it at speed: a kart sitting in the oil after a spin can drive off.)
     k.spin = 36;
   } else if (now === 'jump' && k.speed > 0.3) {
     // Jump bars launch the kart over gaps and walls (Bowser Castle lava, Mario Circuit 2 wall).
@@ -598,7 +627,9 @@ export function featherJump(k: Kart) {
 
 export interface SavedTile {
   genre: number;
-  pixels: Uint8Array;
+  /** The tile's picture (a course), or its atlas tile (the Battle Royale world). */
+  pixels?: Uint8Array;
+  id?: number;
 }
 
 /**
@@ -610,30 +641,10 @@ export function coverTiles(track: Track, tiles: number[]): Map<number, SavedTile
   const pickup = (g: number) => g === Genre.ItemBlock || g === Genre.Coin;
   for (const i of tiles) {
     if (!pickup(track.genres[i])) continue;
-    const tx = i % MAP_SIZE, ty = Math.floor(i / MAP_SIZE);
-    let src = -1;
-    for (let r = 1; r <= 4 && src < 0; r++) {
-      for (let dy = -r; dy <= r && src < 0; dy++) {
-        for (let dx = -r; dx <= r && src < 0; dx++) {
-          const x = tx + dx, y = ty + dy;
-          if (x < 0 || y < 0 || x >= MAP_SIZE || y >= MAP_SIZE) continue;
-          const g = track.genres[y * MAP_SIZE + x];
-          const t = terrainOf(g);
-          if ((t === 'road' || t === 'slow' || t === 'ice') && !pickup(g)) src = y * MAP_SIZE + x;
-        }
-      }
-    }
+    const src = nearbyFloor(track, i, (g) => !pickup(g));
     if (src < 0) continue;
-    const pixels = new Uint8Array(TILE * TILE * 4);
-    const sx = (src % MAP_SIZE) * TILE, sy = Math.floor(src / MAP_SIZE) * TILE;
-    for (let py = 0; py < TILE; py++) {
-      const dst = ((ty * TILE + py) * MAP_PX + tx * TILE) * 4;
-      pixels.set(track.pixels.subarray(dst, dst + TILE * 4), py * TILE * 4);
-      const from = ((sy + py) * MAP_PX + sx) * 4;
-      track.pixels.copyWithin(dst, from, from + TILE * 4);
-    }
-    saved.set(i, { genre: track.genres[i], pixels });
-    track.genres[i] = track.genres[src];
+    saved.set(i, saveTile(track, i));
+    copyTile(track, i, src);
   }
   return saved;
 }
@@ -643,23 +654,38 @@ export function restoreTiles(track: Track, saved: Map<number, SavedTile>, tiles:
     const s = saved.get(i);
     if (!s) continue;
     track.genres[i] = s.genre;
-    const tx = i % MAP_SIZE, ty = Math.floor(i / MAP_SIZE);
-    for (let py = 0; py < TILE; py++) {
-      track.pixels.set(s.pixels.subarray(py * TILE * 4, (py + 1) * TILE * 4), ((ty * TILE + py) * MAP_PX + tx * TILE) * 4);
+    if (track.world) track.world.ids[i] = s.id ?? track.world.ids[i];
+    else if (s.pixels) {
+      const tx = i % MAP_SIZE, ty = Math.floor(i / MAP_SIZE);
+      for (let py = 0; py < TILE; py++) {
+        track.pixels.set(s.pixels.subarray(py * TILE * 4, (py + 1) * TILE * 4), ((ty * TILE + py) * MAP_PX + tx * TILE) * 4);
+      }
     }
     saved.delete(i);
   }
 }
 
+function saveTile(track: Track, i: number): SavedTile {
+  if (track.world) return { genre: track.genres[i], id: track.world.ids[i] };
+  const pixels = new Uint8Array(TILE * TILE * 4);
+  const tx = i % MAP_SIZE, ty = Math.floor(i / MAP_SIZE);
+  for (let py = 0; py < TILE; py++) {
+    const at = ((ty * TILE + py) * MAP_PX + tx * TILE) * 4;
+    pixels.set(track.pixels.subarray(at, at + TILE * 4), py * TILE * 4);
+  }
+  return { genre: track.genres[i], pixels };
+}
+
 /** Connected tiles of the given genre around (tx, ty), within `radius` tiles. */
 export function tileCluster(track: Track, tx: number, ty: number, genre: number, radius: number): number[] {
+  const cols = floorCols(track), rows = floorRows(track);
   const out: number[] = [];
   const seen = new Set<number>();
   const queue = [[tx, ty]];
   while (queue.length) {
     const [x, y] = queue.shift()!;
-    const i = y * MAP_SIZE + x;
-    if (x < 0 || y < 0 || x >= MAP_SIZE || y >= MAP_SIZE || seen.has(i)) continue;
+    const i = y * cols + x;
+    if (x < 0 || y < 0 || x >= cols || y >= rows || seen.has(i)) continue;
     seen.add(i);
     if (track.genres[i] !== genre || Math.max(Math.abs(x - tx), Math.abs(y - ty)) > radius) continue;
     out.push(i);

@@ -202,6 +202,8 @@ export interface Track {
   pixels: Uint8Array;
   /** 128x128 terrain genre per tile. */
   genres: Uint8Array;
+  /** 128x128 road tile numbers (0-255 of the theme's tileset), overlays applied. */
+  tiles: Uint8Array;
   /** Color behind/outside the track. */
   backColor: [number, number, number];
   /** 8x8 RGBA tile the SNES repeats outside the 1024x1024 map (Mode 7 "fill with character 0"). */
@@ -221,6 +223,11 @@ export interface Track {
   ai: AiArea[];
   /** AI targets in pixels, same order as `ai`. */
   path: { x: number; y: number }[];
+  /**
+   * Battle Royale world (src/royale/world.ts): a floor bigger than one course, kept as atlas tile numbers
+   * instead of pixels. Absent on a normal course (128 x 128 tiles, `pixels`).
+   */
+  world?: { cols: number; rows: number; ids: Uint16Array };
 }
 
 export class SmkRom {
@@ -344,6 +351,7 @@ export class SmkRom {
       theme,
       pixels,
       genres,
+      tiles: map.slice(0, MAP_SIZE * MAP_SIZE),
       backColor: themeData.backColor,
       fill: themeData.tilePixels[0],
       background: themeData.background,
@@ -475,7 +483,7 @@ export class SmkRom {
     return areas;
   }
 
-  private loadTheme(theme: number): ThemeData {
+  loadTheme(theme: number): ThemeData {
     const cached = this.themeCache.get(theme);
     if (cached) return cached;
 
@@ -722,7 +730,7 @@ const DRIVER_ANGLE_TABLE = 0x9090;
 const DRIVER_FRAME_TABLE = 0x91fa;
 export const DRIVER_DISTANCE_ROWS = 11;
 
-interface ThemeData {
+export interface ThemeData {
   tilePixels: Uint8Array[];
   genres: Uint8Array;
   backColor: [number, number, number];

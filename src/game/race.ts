@@ -6,14 +6,19 @@ import {
   CPU_SPECIAL, type Cc, type EntityKind, type ItemKind, type KartNetState, type PlayerInfo, type ServerMsg,
 } from '../../shared/protocol';
 import { ROULETTE_MS, START_COINS } from '../../shared/items';
-import { CHARACTERS, Genre, MAP_SIZE, TILE, type DriverSprites, type ItemGraphics, type SpriteFrame, type Track } from '../rom/rom';
+import { CHARACTERS, Genre, TILE, type DriverSprites, type ItemGraphics, type SpriteFrame, type Track } from '../rom/rom';
 import { RemoteKarts, type NetClient } from '../net/client';
 import type { Channel } from '../net/local';
 import { readInput } from './input';
 import {
   CHARACTER_CLASS, KART_CLASSES, NO_INPUT, STEP_MS, applyBreak, countdownInput, coverTiles, createKart, featherJump, isInvincible,
   isBoosting, kartFacing, kartHeight, raceGeometry, terrainAt, restoreTiles, spinOut, stepKart, tileCluster, type Bumper, type Kart, type SavedTile,
+  genreAt,
 } from './physics';
+import { insideZone, type ZoneNow } from '../../shared/royale';
+import { BotDriver, type Rival } from '../royale/bot';
+import type { RoyaleState } from '../royale/state';
+import { regionAt } from '../royale/world';
 import { CHASE_DISTANCE, Renderer, type MapMarker, type ObjectSprite, type Sprite } from './renderer';
 import { PLACE_RED, RaceHud, placeRainbow, type LakituShow } from './hud';
 import { CpuDriver, rubberBand } from './cpu';
@@ -54,6 +59,11 @@ export interface RaceOptions {
   sound?: Sound | null;
   /** Battle Mode: balloons instead of laps; the last one with balloons wins. */
   battle?: boolean;
+  /**
+   * Battle Royale: the open world of every course, up to 100 karts, the safe area closing in; balloons as in
+   * Battle Mode (set `battle` too). Slots are starting places in the world.
+   */
+  royale?: RoyaleState;
 }
 
 /**
@@ -73,6 +83,12 @@ interface Cpu {
   kart: Kart;
   driver: CpuDriver;
   finishedAt: number;
+  /** Battle Royale bot: its brain, its item (from the item authority), the roulette's end, out of balloons. */
+  bot?: BotDriver;
+  item?: ItemKind | null;
+  rollingUntil?: number;
+  pickupCooldown?: number;
+  out?: boolean;
 }
 
 export interface RaceResult {
@@ -131,22 +147,40 @@ export class Race {
   private local: Set<number>;
   /** Spectating: place (0 = leader) of the kart the camera follows. */
   private watchPlace = 0;
+  /** Battle Royale: the safe area now, the course whose sky is showing, our place once out, the winner. */
+  private zone: ZoneNow | null = null;
+  private skyTheme = -1;
+  private royalePlace = 0;
+  private royaleWinner: number | null = null;
+  private outsideSince: number | null = null;
 
   constructor(private o: RaceOptions) {
     const charOf = (id: number) => o.players.find((p) => p.id === id)?.character ?? 0;
-    this.kart = createKart(o.track, o.slot, charOf(o.selfId), o.cc);
+    const place = (k: Kart, slot: number) => {
+      if (!o.royale) return k;
+      const s = o.royale.spawn(slot);
+      Object.assign(k, { x: s.x, y: s.y, angle: s.angle });
+      k.safe = { ...s };
+      return k;
+    };
+    this.kart = place(createKart(o.track, o.slot, charOf(o.selfId), o.cc), o.slot);
     this.cpus = o.cpus.map((c) => {
-      const kart = createKart(o.track, c.slot, charOf(c.id), o.cc);
+      const kart = place(createKart(o.track, c.slot, charOf(c.id), o.cc), c.slot);
       if (o.items) kart.coins = START_COINS;
-      return { id: c.id, kart, driver: new CpuDriver(o.track, kart, c.skill), finishedAt: 0 };
+      const bot = o.royale ? new BotDriver(o.royale.world, c.id, c.skill, Math.random) : undefined;
+      return { id: c.id, kart, driver: new CpuDriver(o.track, kart, c.skill), finishedAt: 0, bot, item: null, rollingUntil: 0, pickupCooldown: 0 };
     });
     if (o.items) this.kart.coins = START_COINS;
     this.local = new Set([o.selfId, ...o.cpus.map((c) => c.id)]);
     this.geo = raceGeometry(o.track);
     this.startAt = performance.now() + o.startInMs;
     this.placeCamera(true);
-    o.renderer.setTrack(o.track, o.drivers, itemFrames(o.itemGfx));
+    const world = o.royale?.world.world;
+    o.renderer.setTrack(o.track, o.drivers, itemFrames(o.itemGfx), world ? {
+      cols: world.cols, rows: world.rows, ids: world.ids, atlas: world.atlas, atlasW: 512, atlasH: 256, outside: world.baseTheme * 256 + 0x44,
+    } : null);
     o.sound?.course(o.track.theme);
+    if (o.royale) this.followRegion(true);
     o.hud.note.textContent = '';
 
     if (o.net) {
@@ -211,8 +245,10 @@ export class Race {
   }
 
   player(id: number): PlayerInfo | undefined {
-    return this.o.players.find((p) => p.id === id);
+    if (this.byId.size !== this.o.players.length) this.byId = new Map(this.o.players.map((p) => [p.id, p]));
+    return this.byId.get(id);
   }
+  private byId = new Map<number, PlayerInfo>();
 
   get finished() {
     return this.finishedAt > 0;
@@ -228,7 +264,35 @@ export class Race {
   private onItemMessage(m: ServerMsg) {
     const o = this.o;
     const k = this.kart;
+    // A bot's own item news (Battle Royale bots use the item boxes like everyone).
+    if ((m.t === 'item' || m.t === 'coins') && m.cpu !== undefined) {
+      const c = this.cpus.find((x) => x.id === m.cpu);
+      if (!c) return;
+      if (m.t === 'item') { c.item = m.item; c.rollingUntil = m.roll ? performance.now() + ROULETTE_MS : 0; }
+      else c.kart.coins = m.coins;
+      return;
+    }
     switch (m.t) {
+      case 'balloons':
+        this.balloons.set(m.id, m.n);
+        if (m.id === o.selfId && m.n < (this.balloons.get(o.selfId) ?? 99)) o.sound?.sfx0(SFX0.bump);
+        break;
+      case 'royaleOut': {
+        this.balloons.set(m.id, 0);
+        const c = this.cpus.find((x) => x.id === m.id);
+        if (c) c.out = true;
+        if (m.id === o.selfId && !this.out) { this.out = true; this.royalePlace = m.place; this.item = null; }
+        break;
+      }
+      case 'royaleOver':
+        this.royaleWinner = m.winner;
+        if (m.winner === o.selfId && !this.finishedAt) {
+          // The last one in: Lakitu waves the flag, the finish music plays, as at the end of a race.
+          this.finishedAt = performance.now();
+          this.royalePlace = 1;
+          this.sign = { kind: 'finish', lap: TOTAL_LAPS, at: this.raceFrame(performance.now()) };
+        }
+        break;
       case 'item':
         this.item = m.item;
         this.rollingUntil = m.roll ? performance.now() + ROULETTE_MS : 0;
@@ -262,7 +326,16 @@ export class Race {
             this.item = null;
           }
           for (const c of this.cpus) {
-            if (c.id !== m.id && !isInvincible(c.kart)) { c.kart.shrink = SHRINK_FRAMES; spinOut(c.kart); }
+            if (c.id !== m.id && !isInvincible(c.kart)) { c.kart.shrink = SHRINK_FRAMES; spinOut(c.kart); c.item = null; }
+          }
+        } else {
+          // One of our bots used an item on itself.
+          const c = this.cpus.find((x) => x.id === m.id);
+          if (c?.bot) {
+            if (m.kind === 'mushroom') c.kart.boost = 60;
+            else if (m.kind === 'star') c.kart.star = STAR_FRAMES;
+            else if (m.kind === 'feather') featherJump(c.kart);
+            else if (m.kind === 'ghost') c.kart.ghost = GHOST_FRAMES;
           }
         }
         break;
@@ -277,7 +350,7 @@ export class Race {
     // Use the held item on button press (not while it's still rolling).
     const pressed = !!input.item && !this.itemHeld;
     this.itemHeld = !!input.item;
-    if (pressed && racing && this.item && now >= this.rollingUntil && k.fall === 0 && !this.finishedAt) {
+    if (pressed && racing && this.item && now >= this.rollingUntil && k.fall === 0 && !this.finishedAt && !this.out) {
       o.channel.send({ t: 'use', x: k.x, y: k.y, a: k.angle, back: input.brake });
       if (this.item === 'greenShell' || this.item === 'redShell') o.sound?.sfx0(SFX0.shell);
       this.item = null;
@@ -285,9 +358,9 @@ export class Race {
 
     // Item boxes and coins under the kart.
     if (this.pickupCooldown > 0) this.pickupCooldown--;
-    if (o.items && racing && k.air === 0 && k.fall === 0 && this.pickupCooldown === 0) {
+    if (o.items && racing && k.air === 0 && k.fall === 0 && this.pickupCooldown === 0 && !this.out) {
       const tx = Math.floor(k.x / TILE), ty = Math.floor(k.y / TILE);
-      const g = o.track.genres[ty * MAP_SIZE + tx];
+      const g = genreAt(o.track, k.x, k.y);
       if (g === Genre.ItemBlock && !this.item && now >= this.rollingUntil) {
         o.channel.send({ t: 'box', tiles: tileCluster(o.track, tx, ty, Genre.ItemBlock, 2) });
         this.pickupCooldown = 20;
@@ -306,7 +379,10 @@ export class Race {
       if (e.dead) { this.entities.delete(e.id); continue; }
       const fresh = frame - e.frame < OWNER_GRACE_FRAMES;
       // Our kart and our CPUs: a star or Boo destroys the item without getting hurt (spinOut checks that).
-      const victims: [number | undefined, Kart][] = [[undefined, k], ...this.cpus.map((c) => [c.id, c.kart] as [number, Kart])];
+      const victims: [number | undefined, Kart][] = [
+        ...(this.out ? [] : [[undefined, k] as [number | undefined, Kart]]),
+        ...this.cpus.filter((c) => !c.out).map((c) => [c.id, c.kart] as [number, Kart]),
+      ];
       for (const [cpu, v] of victims) {
         if ((cpu ?? o.selfId) === e.owner && fresh) continue;
         if (v.air > 0 || v.fall > 0 || Math.hypot(e.x - v.x, e.y - v.y) >= ITEM_HIT_DISTANCE) continue;
@@ -318,13 +394,20 @@ export class Race {
       }
     }
 
-    // A star spins out the CPUs we touch.
-    if (k.star > 0) for (const c of this.cpus) if (Math.hypot(c.kart.x - k.x, c.kart.y - k.y) < 10) spinOut(c.kart);
+    // A star spins out the CPUs we touch (in a battle it pops one of their balloons).
+    if (k.star > 0 && !this.out) {
+      for (const c of this.cpus) {
+        if (c.out || Math.hypot(c.kart.x - k.x, c.kart.y - k.y) >= 10 || isInvincible(c.kart) || c.kart.spin > 0) continue;
+        if (o.royale) o.channel.send({ t: 'pop', cpu: c.id });
+        spinOut(c.kart);
+      }
+    }
 
     // Touching a kart that has a star spins us out.
     if (this.starTouchCooldown > 0) this.starTouchCooldown--;
     // (Our own CPUs aren't in the remote list: Mario and Luigi CPUs use stars too.)
-    for (const r of [...remotes, ...this.cpus.map((c) => netState(c.id, c.kart))]) {
+    for (const r of [...remotes, ...this.cpus.filter((c) => !c.out).map((c) => netState(c.id, c.kart))]) {
+      if (this.out) break;
       if (r.e & EFFECT_STAR && this.starTouchCooldown === 0 && Math.hypot(r.x - k.x, r.y - k.y) < 10) {
         if (o.battle && !isInvincible(k)) o.channel.send({ t: 'pop' });
         spinOut(k);
@@ -338,6 +421,22 @@ export class Race {
   private step(now: number) {
     const racing = now >= this.startAt;
     this.stepSound(now);
+    if (this.o.royale) {
+      this.zone = this.o.royale.zone(now - this.startAt);
+      this.o.renderer.zone = this.zone.now;
+      if (this.frame % 15 === 0) this.followRegion(false);
+      if (this.out) {
+        this.frame++;
+        this.stepItems(now, NO_INPUT, racing);
+        this.stepBots(now, racing);
+        const alive = [...this.remote.sample(), ...this.cpus.filter((c) => !c.out).map((c) => netState(c.id, c.kart))]
+          .filter((r) => (this.balloons.get(r.id) ?? 1) > 0);
+        const w = this.watched(alive);
+        if (w) this.placeCamera(false, w.x, w.y, w.a);
+        this.o.renderer.mapOrigin = this.mapOriginAt(this.cam.x, this.cam.y);
+        return;
+      }
+    }
     if (this.o.spectate) {
       // Thrown items still move on screen; the camera rides behind the followed kart.
       const frame = this.raceFrame(now);
@@ -367,9 +466,11 @@ export class Race {
       this.o.net?.send({ t: 'break', tiles: ev.broken });
     }
     this.stepItems(now, input, racing);
-    this.stepCpus(now, racing);
+    if (this.o.royale) this.stepBots(now, racing);
+    else this.stepCpus(now, racing);
+    if (this.o.royale) this.o.renderer.mapOrigin = this.mapOriginAt(this.kart.x, this.kart.y);
 
-    if (this.kart.lap > TOTAL_LAPS && !this.finishedAt && lapBefore === TOTAL_LAPS) {
+    if (!this.o.royale && this.kart.lap > TOTAL_LAPS && !this.finishedAt && lapBefore === TOTAL_LAPS) {
       this.finishedAt = now;
       this.lapTimes.push(now - this.lapStartedAt);
       this.noteFinisher(this.o.selfId);
@@ -431,6 +532,138 @@ export class Race {
     }
   }
 
+  /**
+   * Battle Royale bots: each drives with its own brain, picks up boxes and coins, uses its item; a bot with a
+   * star pops the balloons of whoever it touches.
+   */
+  private stepBots(now: number, racing: boolean) {
+    const o = this.o, royale = o.royale!, zone = this.zone!;
+    const frame = this.raceFrame(now);
+    const remotes = this.remote.sample();
+    const live = this.cpus.filter((c) => !c.out);
+    const everyone = [
+      ...(this.out ? [] : [netState(o.selfId, this.kart)]),
+      ...live.map((c) => netState(c.id, c.kart)),
+      ...remotes.filter((r) => r.f === 0 && (this.balloons.get(r.id) ?? 1) > 0),
+    ];
+    const bumpers = this.bumpers(everyone.filter((r) => r.f === 0 && !(r.e & (EFFECT_GHOST | EFFECT_SHRUNK))));
+    // Rivals each bot can see: a coarse grid so 100 karts don't each look at 100 others.
+    const CELL = 512, grid = new Map<number, Rival[]>();
+    const key = (x: number, y: number) => Math.floor(x / CELL) * 1000 + Math.floor(y / CELL);
+    for (const r of everyone) {
+      if (r.e & EFFECT_GHOST) continue;
+      const g = key(r.x, r.y);
+      if (!grid.has(g)) grid.set(g, []);
+      grid.get(g)!.push({ id: r.id, x: r.x, y: r.y, a: r.a, star: !!(r.e & EFFECT_STAR) });
+    }
+    const near = (k: Kart, id: number) => {
+      const out: Rival[] = [];
+      const cx = Math.floor(k.x / CELL), cy = Math.floor(k.y / CELL);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        for (const r of grid.get((cx + dx) * 1000 + cy + dy) ?? []) if (r.id !== id) out.push(r);
+      }
+      return out;
+    };
+    // Karts to bump into, in 64 px cells: each bot only looks at the cells round it.
+    const BCELL = 64, bgrid = new Map<number, (Bumper & { id: number })[]>();
+    for (const b of bumpers) {
+      const g = Math.floor(b.x / BCELL) * 4096 + Math.floor(b.y / BCELL);
+      if (!bgrid.has(g)) bgrid.set(g, []);
+      bgrid.get(g)!.push(b);
+    }
+    const bumpNear = (k: Kart, id: number) => {
+      const out: Bumper[] = [];
+      const cx = Math.floor(k.x / BCELL), cy = Math.floor(k.y / BCELL);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        for (const b of bgrid.get((cx + dx) * 4096 + cy + dy) ?? []) if (b.id !== id) out.push(b);
+      }
+      return out;
+    };
+    for (const c of live) {
+      const k = c.kart, bot = c.bot!;
+      if (!racing) { countdownInput(k, NO_INPUT, frame); continue; }
+      const rolling = now < (c.rollingUntil ?? 0);
+      const input = bot.input(k, {
+        frame, zone: zone.now, next: zone.next, nav: royale.nav, rivals: near(k, c.id), boxes: royale.boxes, spawns: royale.spawns,
+        item: rolling ? null : c.item ?? null,
+      });
+      const ev = stepKart(k, input, o.track, this.geo, bumpNear(k, c.id), frame);
+      if (ev.broken.length) {
+        o.renderer.updateTiles(o.track, ev.broken);
+        royale.nav.refresh(ev.broken);
+        o.net?.send({ t: 'break', tiles: ev.broken });
+      }
+      // Item: use it when the brain says so.
+      const use = bot.wantsItem();
+      if (use && c.item && !rolling && k.fall === 0) {
+        o.channel.send({ t: 'use', cpu: c.id, x: k.x, y: k.y, a: k.angle, back: use.back });
+        c.item = null;
+      }
+      // Boxes and coins under the kart.
+      if (c.pickupCooldown) c.pickupCooldown--;
+      if (k.air === 0 && k.fall === 0 && !c.pickupCooldown) {
+        const g = genreAt(o.track, k.x, k.y);
+        const tx = Math.floor(k.x / TILE), ty = Math.floor(k.y / TILE);
+        if (g === Genre.ItemBlock && !c.item && !rolling) {
+          o.channel.send({ t: 'box', cpu: c.id, tiles: tileCluster(o.track, tx, ty, Genre.ItemBlock, 2) });
+          c.pickupCooldown = 20;
+        } else if (g === Genre.Coin) {
+          o.channel.send({ t: 'coin', cpu: c.id, tiles: tileCluster(o.track, tx, ty, Genre.Coin, 1) });
+          c.pickupCooldown = 6;
+        }
+      }
+      // A star: spin out and pop whoever it touches (other bots here; people check for themselves).
+      if (k.star > 0) {
+        for (const v of live) {
+          if (v === c || v.out || isInvincible(v.kart) || v.kart.spin > 0 || Math.hypot(v.kart.x - k.x, v.kart.y - k.y) >= 10) continue;
+          o.channel.send({ t: 'pop', cpu: v.id });
+          spinOut(v.kart);
+        }
+      }
+    }
+    if (this.frame % Math.round(60 / NET_HZ) === 0) {
+      (o.net ?? o.channel).send({ t: 'cpu', karts: live.map((c) => netState(c.id, c.kart)) });
+    }
+  }
+
+  /** Battle Royale: the sky (and music) of the course we're on, or nearest to. */
+  private followRegion(force: boolean) {
+    const o = this.o, w = o.royale!.world.world;
+    const p = this.out ? this.cam : this.kart;
+    const theme = regionAt(w, p.x, p.y).theme;
+    if (theme === this.skyTheme && !force) return;
+    this.skyTheme = theme;
+    const sky = w.skies.get(theme);
+    if (sky) o.renderer.setSky(sky);
+    if (!force && o.sound) {
+      // Each course has its own music: load its song set and start its race tune again.
+      o.sound.course(theme);
+      this.musicCue = '';
+    }
+  }
+
+  /** The course map (lower screen) shows the 1024 x 1024 world area around (x, y). */
+  private mapOriginAt(x: number, y: number) {
+    const w = this.o.royale!.world.world;
+    const max = (n: number) => Math.max(0, n * TILE - 1024);
+    return { x: Math.round(Math.min(max(w.cols), Math.max(0, x - 512))), y: Math.round(Math.min(max(w.rows), Math.max(0, y - 512))) };
+  }
+
+  /** Battle Royale: how many drivers are still in. */
+  private aliveCount(): number {
+    if (!this.o.royale) return 0;
+    let n = 0;
+    for (const [, b] of this.balloons) if (b > 0) n++;
+    const known = this.balloons.size;
+    return n + Math.max(0, this.o.players.length - known);
+  }
+
+  /** Battle Royale result for this player: place (1 = won), once known. */
+  get royaleResult(): { place: number; winner: number | null } | null {
+    if (!this.o.royale || (!this.out && this.royaleWinner === null)) return null;
+    return { place: this.royalePlace || 1, winner: this.royaleWinner };
+  }
+
   /** Sounds of our own kart, as the game raises them. */
   private kartSounds(ev: ReturnType<typeof stepKart>, input: ReturnType<typeof readInput>, _spinBefore: number, boostBefore: number, now: number) {
     const s = this.o.sound, k = this.kart;
@@ -470,7 +703,7 @@ export class Race {
     // Music cues go out early by the audio latency, so what is heard lines up with the picture.
     const frame = this.raceFrame(now) + s.leadFrames, k = this.kart;
     const cue = (name: string, cmd: number) => { if (this.musicCue !== name) { this.musicCue = name; s.music(cmd); } };
-    if (k.lap >= TOTAL_LAPS && this.finalLapAt === null && !this.o.spectate) this.finalLapAt = frame;
+    if (!this.o.royale && k.lap >= TOTAL_LAPS && this.finalLapAt === null && !this.o.spectate) this.finalLapAt = frame;
     if (this.finishedAt) {
       const since = (now - this.finishedAt) / STEP_MS;
       if (since >= MUSIC_AFTER_FINISH) cue('after', MUSIC.afterRace);
@@ -489,7 +722,7 @@ export class Race {
     if (k.star === 0) this.starTune = false;
     // Engine: our kart's speed in game units / 16 (also while revving on the grid).
     const revving = this.raceFrame(now) < 0 && readInput().accel;
-    s.engine(this.o.spectate ? 0 : revving ? 24 : Math.abs(k.speed) * 16);
+    s.engine(this.o.spectate || this.out ? 0 : revving ? 24 : Math.abs(k.speed) * 16);
   }
 
   /** Battle balloons: yellow for us, blue for the others (the original's two players). */
@@ -533,8 +766,19 @@ export class Race {
   /** Falling off (Lakitu's rescue) and going the wrong way (his reverse sign). */
   private watchLakitu(now: number, racing: boolean) {
     const k = this.kart, frame = this.raceFrame(now);
+    if (k.fall > 0 && this.fellAt === null && this.o.royale) {
+      // Open world: Lakitu brings the kart back to the nearest stretch of racing line, facing along it.
+      let best = k.safe, bestD = Infinity;
+      for (const p of this.o.royale.spawns) {
+        const d = (p.x - k.x) ** 2 + (p.y - k.y) ** 2;
+        if (d < bestD) { bestD = d; best = p; }
+      }
+      k.safe = { x: best.x, y: best.y, angle: best.angle };
+    }
     if (k.fall > 0) this.fellAt ??= frame;
     else if (this.fellAt !== null && frame - this.fellAt > 40) this.fellAt = null;
+    // No laps in a battle: no wrong way either.
+    if (this.o.battle) return;
     // Sampled twice a second: progress going down while driving forward = wrong way.
     if (racing && !this.finishedAt && frame % 30 === 0) {
       const back = k.progress < this.progressSample - 0.5 && k.speed > 0.5 && k.fall === 0;
@@ -549,6 +793,11 @@ export class Race {
     if (this.o.spectate) return frame <= 140 ? { kind: 'start', t: frame } : null;
     if (this.fellAt !== null) return { kind: 'rescue', t: frame - this.fellAt, x: 128, y: 70 };
     if (this.reverseSince !== null && frame - this.reverseSince >= 30) return { kind: 'reverse', t: frame - this.reverseSince - 30 };
+    if (this.o.royale && !this.out && !this.finishedAt && this.zone && frame > 0) {
+      if (!insideZone(this.zone.now, this.kart.x, this.kart.y)) this.outsideSince ??= frame;
+      else this.outsideSince = null;
+      if (this.outsideSince !== null) return { kind: 'reverse', t: frame - this.outsideSince };
+    }
     if (this.sign) {
       const show: LakituShow = this.sign.kind === 'lap'
         ? { kind: 'lap', lap: this.sign.lap, t: frame - this.sign.at }
@@ -564,10 +813,11 @@ export class Race {
 
   private draw(now: number) {
     const o = this.o;
-    const remotes = [...this.remote.sample(), ...this.cpus.map((c) => netState(c.id, c.kart))];
+    const remotes = [...this.remote.sample(), ...this.cpus.filter((c) => !c.out).map((c) => netState(c.id, c.kart))]
+      .filter((r) => !o.royale || (this.balloons.get(r.id) ?? 1) > 0);
     const charOf = (id: number) => o.players.find((p) => p.id === id)?.character ?? 0;
     const nameOf = (id: number) => CHARACTER_NAMES[charOf(id)];
-    const watched = o.spectate ? this.watched(remotes) : null;
+    const watched = o.spectate || (o.royale && this.out) ? this.watched(remotes) : null;
     const me = this.kart;
 
     const sprites: Sprite[] = remotes.map((r) => ({
@@ -578,7 +828,7 @@ export class Race {
       boost: !!(r.e & EFFECT_BOOST),
       balloons: o.battle ? this.balloons.get(r.id) ?? BATTLE_BALLOONS : 0, balloonPalette: this.balloonPalette(r.id),
     }));
-    if (!o.spectate) sprites.push({
+    if (!o.spectate && !this.out) sprites.push({
       x: me.x, y: me.y, angle: kartFacing(me), character: charOf(o.selfId),
       scale: (me.fall > 0 ? me.fall / 70 : 1) * (me.shrink > 0 ? 0.5 : 1), lift: kartHeight(me),
       alpha: me.ghost > 0 ? 0.45 : 1, flash: me.star > 0,
@@ -589,9 +839,13 @@ export class Race {
 
     const frame = this.raceFrame(now);
     const objects: ObjectSprite[] = [];
+    const sets = o.royale?.world.world;
     o.track.objects.forEach((obj, i) => {
       const st = objectState(obj.kind, i, frame);
-      if (st.visible) objects.push({ x: obj.x, y: obj.y, lift: st.height, frame: Math.floor(frame / 8) % Math.max(1, o.track.objectFrames.length) });
+      if (!st.visible) return;
+      const set = sets?.objectSets[sets.objectSet[i]];
+      const frames = set?.frames ?? o.track.objectFrames;
+      objects.push({ x: obj.x, y: obj.y, lift: st.height, frame: Math.floor(frame / 8) % Math.max(1, frames.length), frames: set?.frames, sizes: set?.sizes });
     });
     for (const e of this.entities.values()) {
       // Shells spin: their picture flips every few frames while they move.
@@ -606,7 +860,7 @@ export class Race {
     };
     const markers = remotes.filter((r) => r !== watched).map((r) => marker(r.id, r.x, r.y));
     if (watched) markers.push(marker(watched.id, watched.x, watched.y));
-    else if (!o.spectate) markers.push(marker(o.selfId, me.x, me.y));
+    else if (!o.spectate && !this.out) markers.push(marker(o.selfId, me.x, me.y));
 
     // Whose numbers the HUD shows: our own kart, or the one a spectator follows.
     const ranked = [{ id: o.selfId, p: this.finishedAt ? Infinity : me.progress }, ...remotes.map((r) => ({ id: r.id, p: r.p }))];
@@ -618,6 +872,14 @@ export class Race {
     const lakitu = this.lakituShow(frame);
 
     o.renderer.render(this.cam, sprites, objects, markers, (hud) => {
+      if (o.royale) {
+        if (!this.out && !this.finishedAt) this.drawItemBox(now, hud);
+        hud.alive(this.aliveCount());
+        if (this.royalePlace === 1 && this.finishedAt) hud.text('WINNER', 128, 40);
+        else if (this.out) hud.text(`PLACE ${this.royalePlace}`, 128, 40);
+        if (lakitu) hud.lakitu(lakitu, frame);
+        return;
+      }
       if (o.battle) {
         // Battle: no laps, places or lap times; Lakitu still starts it.
         if (!o.spectate) this.drawItemBox(now, hud);
@@ -642,7 +904,19 @@ export class Race {
       if (lakitu) hud.lakitu(lakitu, frame);
     });
     o.hud.note.textContent = watched ? `ASSISTINDO ${nameOf(watched.id).toUpperCase()}  (← → troca)` : o.spectate ? 'ASSISTINDO' : '';
+    if (o.royale && this.out && watched && !this.watchKeys) {
+      // Out of the battle: ← → switch whom the camera follows.
+      const key = (e: KeyboardEvent) => {
+        if (e.code === 'ArrowLeft' || e.code === 'KeyA') this.watchPlace--;
+        else if (e.code === 'ArrowRight' || e.code === 'KeyD') this.watchPlace++;
+      };
+      addEventListener('keydown', key);
+      this.unsubs.push(() => removeEventListener('keydown', key));
+      this.watchKeys = true;
+    }
   }
+
+  private watchKeys = false;
 
   /** Held item (or the roulette) in its box at the top center. */
   private drawItemBox(now: number, hud: RaceHud) {

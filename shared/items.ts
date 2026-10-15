@@ -45,6 +45,8 @@ export class ItemAuthority {
     private random: () => number = Math.random,
     /** Solo practice has nobody to compare with: roll as if mid-pack. */
     private forceSituation: keyof ItemOdds | null = null,
+    /** Tiles on the floor (a course has 128 x 128; the Battle Royale world more). */
+    private tileCount = 128 * 128,
   ) {}
 
   addPlayer(id: number) {
@@ -62,8 +64,8 @@ export class ItemAuthority {
 
   /** Handles item messages from a player; returns false for anything else. */
   handle(id: number, msg: ClientMsg): boolean {
-    // CPU hits are reported by whoever simulates the CPUs.
-    if (msg.t === 'hit' && msg.cpu !== undefined) id = msg.cpu;
+    // CPUs' hits (and Battle Royale bots' boxes, coins and items) come from whoever simulates them.
+    if ((msg.t === 'hit' || msg.t === 'box' || msg.t === 'coin' || msg.t === 'use') && msg.cpu !== undefined) id = msg.cpu;
     const p = this.players.get(id);
     if (!p) return false;
     switch (msg.t) {
@@ -97,7 +99,7 @@ export class ItemAuthority {
   }
 
   private onBox(id: number, p: PlayerItems, tiles: number[]) {
-    tiles = cleanTiles(tiles, 16);
+    tiles = cleanTiles(tiles, 16, this.tileCount);
     if (!tiles.length) return;
     const key = Math.min(...tiles);
     if (this.usedBoxes.has(key) || p.item || p.rolled) return;
@@ -109,7 +111,7 @@ export class ItemAuthority {
   }
 
   private onCoin(id: number, p: PlayerItems, tiles: number[]) {
-    tiles = cleanTiles(tiles, 4);
+    tiles = cleanTiles(tiles, 4, this.tileCount);
     if (!tiles.length || tiles.some((t) => this.takenCoins.has(t))) return;
     tiles.forEach((t) => this.takenCoins.add(t));
     this.send('all', { t: 'tiles', tiles, restore: false });
@@ -235,9 +237,9 @@ export class ItemAuthority {
   }
 }
 
-function cleanTiles(tiles: unknown, max: number): number[] {
+function cleanTiles(tiles: unknown, max: number, count: number): number[] {
   if (!Array.isArray(tiles)) return [];
-  return tiles.slice(0, max).filter((t): t is number => Number.isInteger(t) && t >= 0 && t < 128 * 128);
+  return tiles.slice(0, max).filter((t): t is number => Number.isInteger(t) && t >= 0 && t < count);
 }
 
 const CPU_DROPS: EntityKind[] = ['banana', 'greenShell', 'poison', 'fireball', 'egg'];

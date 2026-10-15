@@ -78,11 +78,36 @@ npm start & npx tsx tools/net-test.ts "Super Mario Kart (USA).sfc" 3 0 1   # 3 c
 npm start & npx tsx tools/lobby-test.ts "Super Mario Kart (USA).sfc"      # lobby ao vivo + espectador entrando no meio
 npx tsx tools/race-preview.ts "Super Mario Kart (USA).sfc" saida 0 3       # tela da corrida (software) com o bot dirigindo
 npx tsx tools/hud-preview.ts "Super Mario Kart (USA).sfc" saida            # HUD e Lakitu (largada, voltas, chegada...)
+npx tsx tools/royale-test.ts "Super Mario Kart (USA).sfc"                  # Battle Royale: mundo, zona e 99 bots
 ```
 
 Estado atual: bot-test 20/20, cpu-test 160/160 CPUs terminam, item-test 13/13, net-test passando, lobby-test 15/15.
 O bot usa a mesma IA das CPUs, inclusive o resgate do Lakitu; sem ele, em Bowser Castle 3 a IA erra os pulos entre
 plataformas.
+
+## Battle Royale (modo novo)
+
+No menu principal: **BATTLE ROYALE**. São 100 pilotos num mundo aberto que junta todas as pistas do jogo: as 20 do GP e as 4 de batalha. Vence o último que ainda tiver balões.
+
+- **O mundo:** é uma grade de 6 × 4 pistas, com cada copa numa linha e a pista de batalha no fim.
+  - Entre as pistas há estradas no estilo do Mario Circuit: asfalto listrado e bordas copiados das retas do Mario Circuit 1 e 2, sobre a areia do Mario Circuit.
+  - Cada estrada abre a cerca e entra até a pista, atravessando o que houver no caminho: canos, vazio, água, lava.
+  - O verde de fora das cercas, que na pista original é "fora dos limites", vira grama transitável.
+  - Cada pista mantém seus blocos, terreno, objetos (canos, Thwomps, toupeiras, plantas, peixes), caixas de item e moedas.
+  - O céu do horizonte e a música mudam conforme a pista em que você está.
+- **As regras:**
+  - São as do Battle Mode: 3 balões, e cada acerto de casco, banana ou estrela fura um.
+  - Uma área segura vai fechando em 6 fases, e o chão fora dela fica arroxeado.
+  - Fora da área, o Lakitu mostra a placa de contramão e você perde um balão a cada 4 s.
+  - O contador de pilotos vivos fica no lugar das vidas do GP. Quem perde todos os balões assiste aos outros (← → troca de piloto).
+- **Os bots:**
+  - Dentro de uma pista, seguem a linha de corrida da própria ROM, os mesmos dados de IA das CPUs.
+  - Entre pistas e para entrar na área segura, usam um mapa de distâncias do mundo inteiro.
+  - Pegam caixas de item e usam os itens como os jogadores: cascos em quem está à frente, banana em quem vem atrás, estrela para atropelar.
+  - Quando caem, o Lakitu os devolve ao ponto mais próximo da linha de corrida.
+- **Sozinho:** você e 99 bots, tudo no navegador.
+
+Teste: `npx tsx tools/royale-test.ts "Super Mario Kart (USA).sfc"`. Ele confere que todas as pistas estão ligadas, que a zona fecha dentro do mundo e que os bots andam e caem pouco.
 
 ## O que já funciona
 
