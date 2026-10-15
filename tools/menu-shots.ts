@@ -80,5 +80,10 @@ const marker = (tv: number) => {
 };
 for (const [tv, expected] of [[0, 0x1815], [4, 0x1817], [2, 0x1850], [1, 0x1851], [6, 0x1852], [3, 0x1853], [7, 0x1854], [5, 0x1855]] as const) {
   if (marker(tv)[0] !== expected) throw new Error(`marcador ${tv}: esperado ${expected.toString(16)}, recebido ${marker(tv)[0].toString(16)}`);
+  // The digit must show: color-3 pixels (both bitplanes) inside the frame, like the ROM's 1/2.
+  const tileAt = 0x6000 + (expected & 0x3ff) * 16;
+  let digit = 0;
+  for (let y = 1; y < 8; y++) for (let x = 1; x < 8; x++) if (a.select.vram[tileAt + y * 2] & a.select.vram[tileAt + y * 2 + 1] & (1 << (7 - x))) digit++;
+  if (digit < 6) throw new Error(`marcador ${tv}: número invisível (${digit} pixels na cor 3)`);
 }
 console.log('marcadores 1P..8P: OK');

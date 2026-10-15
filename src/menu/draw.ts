@@ -149,27 +149,33 @@ export function tvMarker(s: Screen, tv: number, player: number | null) {
   setMapEntry(s, SELECT_BG1, col + 1, row, player === 2 ? 0x1818 : 0x1816);
 }
 
-/** Extra online-player digits in the same 8x8 framed-label style as the ROM's 1P/2P tiles. */
+/**
+ * Extra online-player digits, drawn like the ROM's "1" and "2" (tiles 15/17): 4x5 pixels at columns 3-6, rows
+ * 2-6, in color 3 on the label's color 1.
+ */
 const ONLINE_DIGITS: Record<number, readonly string[]> = {
-  3: ['.....', '.XXX.', '....X', '..XX.', '....X', '.XXX.'],
-  4: ['...X.', '..XX.', '.X.X.', 'XXXXX', '...X.', '...X.'],
-  5: ['.XXXX', '.X...', '.XXX.', '....X', '....X', '.XXX.'],
-  6: ['..XXX', '.X...', '.XXXX', '.X..X', '.X..X', '..XX.'],
-  7: ['.XXXX', '....X', '...X.', '..X..', '..X..', '..X..'],
-  8: ['..XXX', '.X..X', '..XX.', '.X..X', '.X..X', '..XX.'],
+  3: ['XXX.', '...X', '.XX.', '...X', 'XXX.'],
+  4: ['X.X.', 'X.X.', 'XXXX', '..X.', '..X.'],
+  5: ['XXXX', 'X...', 'XXX.', '...X', 'XXX.'],
+  6: ['.XX.', 'X...', 'XXX.', 'X..X', '.XX.'],
+  7: ['XXXX', '...X', '..X.', '.X..', '.X..'],
+  8: ['.XX.', 'X..X', '.XX.', 'X..X', '.XX.'],
 };
 
 function onlineDigitTile(s: Screen, player: number): number {
   const tile = 0x50 + player - 3;
   const at = 0x6000 + tile * 16;
-  // Tile 02 is the left half of the original empty marker: retain its frame,
-  // then draw a compact, one-colour digit with the original marker palette.
+  // Tile 02 is the left half of the original empty marker (frame in color 3, inside color 1): keep its frame.
   s.vram.copyWithin(at, 0x6000 + 0x02 * 16, 0x6000 + 0x03 * 16);
   const rows = ONLINE_DIGITS[player];
   if (!rows) return tile;
   for (let y = 0; y < rows.length; y++) {
     for (let x = 0; x < rows[y].length; x++) {
-      if (rows[y][x] === 'X') s.vram[at + (y + 2) * 2] |= 1 << (7 - (x + 2));
+      if (rows[y][x] !== 'X') continue;
+      // 2bpp: both bitplanes set = color 3 (only the first one would leave color 1, the label's orange).
+      const bit = 1 << (7 - (x + 3));
+      s.vram[at + (y + 2) * 2] |= bit;
+      s.vram[at + (y + 2) * 2 + 1] |= bit;
     }
   }
   return tile;
