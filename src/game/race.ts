@@ -161,21 +161,21 @@ export class Race {
 
   constructor(private o: RaceOptions) {
     const charOf = (id: number) => o.players.find((p) => p.id === id)?.character ?? 0;
-    const place = (k: Kart, slot: number) => {
+    const place = (k: Kart, slot: number, character: number, cpu = false) => {
       if (!o.royale) return k;
-      const s = o.royale.spawn(slot);
+      const s = o.royale.spawn(slot, character, cpu);
       Object.assign(k, { x: s.x, y: s.y, angle: s.angle });
       k.safe = { ...s };
       return k;
     };
-    this.kart = place(createKart(o.track, o.slot, charOf(o.selfId), o.cc), o.slot);
+    this.kart = place(createKart(o.track, o.slot, charOf(o.selfId), o.cc), o.slot, charOf(o.selfId));
     if (o.start) {
       Object.assign(this.kart, { x: o.start.x, y: o.start.y, angle: o.start.a });
       this.kart.safe = { x: o.start.x, y: o.start.y, angle: o.start.a };
     }
     for (const [id, n] of o.balloons ?? []) this.balloons.set(id, n);
     this.cpus = o.cpus.map((c) => {
-      const kart = place(createKart(o.track, c.slot, charOf(c.id), o.cc), c.slot);
+      const kart = place(createKart(o.track, c.slot, charOf(c.id), o.cc), c.slot, charOf(c.id), true);
       if (o.items) kart.coins = START_COINS;
       const bot = o.royale ? new BotDriver(o.royale.world, c.id, c.skill, Math.random) : undefined;
       return { id: c.id, kart, driver: new CpuDriver(o.track, kart, c.skill), finishedAt: 0, bot, item: null, rollingUntil: 0, pickupCooldown: 0 };
