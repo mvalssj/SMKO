@@ -166,7 +166,10 @@ body.touch.on-rom #touch { display: none; }
   font: bold 13px sans-serif; min-width: 64px; text-align: center;
 }
 #touch .start { position: absolute; left: 50%; transform: translateX(-50%); bottom: max(12px, env(safe-area-inset-bottom)); padding: 4px 12px; font-size: 11px; }
-#touch [data-btn].down { filter: brightness(1.8); }
+/* Visual press mirrors the short vibration; it remains useful on browsers that do not expose navigator.vibrate(). */
+#touch .dpad.down { background: rgba(110, 100, 170, 0.7); transform: scale(0.96); box-shadow: 0 0 18px rgba(180, 150, 255, 0.65); }
+#touch [data-btn].down { filter: brightness(1.8); transform: scale(0.93); box-shadow: 0 0 14px rgba(210, 185, 255, 0.7); }
+#touch .start.down { transform: translateX(-50%) scale(0.93); }
 body.touch .corner-btns { top: max(8px, env(safe-area-inset-top)); bottom: auto; }
 body.touch #menu-bar { right: auto; left: 8px; max-width: calc(100vw - 200px); }
 

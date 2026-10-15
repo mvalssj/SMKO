@@ -67,6 +67,23 @@ function startPads() {
 
 // ---------- Touch ----------
 
+/** A light confirmation for the on-screen pad. Unsupported browsers (notably iOS Safari) simply ignore it. */
+let lastHaptic = 0;
+function haptic(ms: number) {
+  if (typeof navigator.vibrate !== 'function') return;
+  const now = performance.now();
+  // Sliding a thumb across the D-pad can emit many pointer events; one pulse per 45 ms still feels precise.
+  if (now - lastHaptic < 45) return;
+  lastHaptic = now;
+  navigator.vibrate(ms);
+}
+
+function touchHaptic(f: { el: HTMLElement; keys: string[] }) {
+  if (!f.keys.length) return;
+  if (f.el.classList.contains('dpad')) haptic(5);
+  else haptic(f.el.dataset.btn === 'START' ? 16 : f.el.dataset.btn === 'L' || f.el.dataset.btn === 'R' ? 7 : 10);
+}
+
 /** Which control each finger is on: the D-pad or a button. */
 const fingers = new Map<number, { el: HTMLElement; keys: string[] }>();
 
@@ -95,6 +112,7 @@ function refreshTouch() {
   document.querySelectorAll<HTMLElement>('#touch [data-btn]').forEach((b) => {
     b.classList.toggle('down', [...fingers.values()].some((f) => f.el === b && f.keys.length > 0));
   });
+  document.querySelector<HTMLElement>('#touch .dpad')?.classList.toggle('down', [...fingers.values()].some((f) => f.el.classList.contains('dpad') && f.keys.length > 0));
   sources.touch = now;
   sync();
 }
@@ -107,13 +125,18 @@ function setupTouch(root: HTMLElement) {
     e.preventDefault();
     el.setPointerCapture(e.pointerId);
     starts.set(e.pointerId, el);
-    fingers.set(e.pointerId, fingerKeys(el, e.clientX, e.clientY));
+    const next = fingerKeys(el, e.clientX, e.clientY);
+    fingers.set(e.pointerId, next);
+    touchHaptic(next);
     refreshTouch();
   });
   root.addEventListener('pointermove', (e) => {
     const el = starts.get(e.pointerId);
     if (!el) return;
-    fingers.set(e.pointerId, fingerKeys(el, e.clientX, e.clientY));
+    const before = fingers.get(e.pointerId);
+    const next = fingerKeys(el, e.clientX, e.clientY);
+    fingers.set(e.pointerId, next);
+    if (!before || before.el !== next.el || before.keys.length !== next.keys.length || before.keys.some((k, i) => k !== next.keys[i])) touchHaptic(next);
     refreshTouch();
   });
   const up = (e: PointerEvent) => {
