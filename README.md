@@ -121,7 +121,7 @@ npx tsx tools/race-preview.ts "Super Mario Kart (USA).sfc" saida 0 3       # tel
 npx tsx tools/hud-preview.ts "Super Mario Kart (USA).sfc" saida            # HUD e Lakitu (largada, voltas, chegada...)
 npx tsx tools/royale-test.ts "Super Mario Kart (USA).sfc"                  # Battle Royale: mundo, zona e 99 bots
 npm start & npx tsx tools/royale-net-test.ts "Super Mario Kart (USA).sfc" # Battle Royale online: troca bot -> pessoa
-SMKO_ADMIN_PASSWORD=teste123 npm start & npx tsx tools/admin-test.ts "Super Mario Kart (USA).sfc" teste123  # painel
+SMKO_ADMIN_PASSWORD=teste123 SMKO_TRUST_PROXY=1 npm start & npx tsx tools/admin-test.ts "Super Mario Kart (USA).sfc" teste123  # painel
 ```
 
 Estado atual: bot-test 20/20, cpu-test 160/160 CPUs terminam, item-test 13/13, net-test passando, lobby-test 15/15.
