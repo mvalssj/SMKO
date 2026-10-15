@@ -57,6 +57,14 @@ export class ItemAuthority {
     this.players.delete(id);
   }
 
+  /** A person carries on with a bot's kart: its item and coins become theirs. */
+  rename(from: number, to: number) {
+    const p = this.players.get(from);
+    if (!p) return;
+    this.players.delete(from);
+    this.players.set(to, p);
+  }
+
   updateKart(id: number, lap: number, progress: number) {
     const p = this.players.get(id);
     if (p) { p.lap = lap; p.progress = progress; }

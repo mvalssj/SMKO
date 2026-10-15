@@ -79,6 +79,7 @@ npm start & npx tsx tools/lobby-test.ts "Super Mario Kart (USA).sfc"      # lobb
 npx tsx tools/race-preview.ts "Super Mario Kart (USA).sfc" saida 0 3       # tela da corrida (software) com o bot dirigindo
 npx tsx tools/hud-preview.ts "Super Mario Kart (USA).sfc" saida            # HUD e Lakitu (largada, voltas, chegada...)
 npx tsx tools/royale-test.ts "Super Mario Kart (USA).sfc"                  # Battle Royale: mundo, zona e 99 bots
+npm start & npx tsx tools/royale-net-test.ts "Super Mario Kart (USA).sfc" # Battle Royale online: troca bot -> pessoa
 ```
 
 Estado atual: bot-test 20/20, cpu-test 160/160 CPUs terminam, item-test 13/13, net-test passando, lobby-test 15/15.
@@ -105,7 +106,13 @@ No menu principal: **BATTLE ROYALE**. São 100 pilotos num mundo aberto que junt
   - Entre pistas e para entrar na área segura, usam um mapa de distâncias do mundo inteiro.
   - Pegam caixas de item e usam os itens como os jogadores: cascos em quem está à frente, banana em quem vem atrás, estrela para atropelar.
   - Quando caem, o Lakitu os devolve ao ponto mais próximo da linha de corrida.
-- **Sozinho:** você e 99 bots, tudo no navegador.
+- **Online:** ao escolher BATTLE ROYALE, o jogo procura uma partida no servidor. A partida tem sempre 100 pilotos.
+  - Se houver uma em andamento, você entra no lugar de um bot que ainda está vivo: assume o kart, a posição e os balões dele, de preferência dentro da área segura e longe das outras pessoas. Isso vale até a 3ª fase da zona.
+  - Se não houver, começa uma partida nova com você e 99 bots.
+  - Os bots rodam no navegador de um dos jogadores. Se ele sair, outro assume do ponto em que estavam.
+  - O servidor cuida dos itens, dos balões e da zona, e continua sem ver a ROM.
+  - Cada jogador recebe os karts próximos 20 vezes por segundo e os distantes 4 vezes por segundo.
+- **Sem servidor:** você e 99 bots, tudo no navegador.
 
 Teste: `npx tsx tools/royale-test.ts "Super Mario Kart (USA).sfc"`. Ele confere que todas as pistas estão ligadas, que a zona fecha dentro do mundo e que os bots andam e caem pouco.
 

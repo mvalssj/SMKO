@@ -80,4 +80,9 @@ export class RemoteKarts {
   clear() {
     this.snaps.clear();
   }
+
+  /** Stops showing a kart (its driver left or was replaced). */
+  forget(id: number) {
+    this.snaps.delete(id);
+  }
 }

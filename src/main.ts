@@ -6,7 +6,8 @@ import { loadRaceGfx } from './rom/race-gfx';
 import { NetClient } from './net/client';
 import { LocalChannel } from './net/local';
 import { Race, formatTime } from './game/race';
-import { buildWorld } from './royale/world';
+import { buildWorld, type WorldTrack } from './royale/world';
+import { applyBreak } from './game/physics';
 import { RoyaleState } from './royale/state';
 import { ROYALE_PLAYERS } from '../shared/royale';
 import { Renderer, SCREEN_W } from './game/renderer';
@@ -428,6 +429,8 @@ $('btn-copy').addEventListener('click', async () => {
 
 interface StartArgs {
   royale?: RoyaleState;
+  start?: { x: number; y: number; a: number };
+  balloons?: [number, number][];
   track: ReturnType<SmkRom['loadTrack']>;
   cc: Cc;
   players: PlayerInfo[];
@@ -467,8 +470,12 @@ function startRace(a: StartArgs) {
     lives: a.lives,
     battle: a.battle,
     royale: a.royale,
+    start: a.start,
+    balloons: a.balloons,
     sound,
   });
+  // Online Battle Royale: people come in with drivers nobody had yet.
+  race.onNewDriver = (c) => { const d = rom!.loadDriverSprites(c, a.track.colors); drivers.set(c, d); renderer?.addDriver(c, d); };
   race.start();
 }
 
@@ -478,14 +485,74 @@ function startRace(a: StartArgs) {
 let royaleOn = false;
 
 /**
- * Solo Battle Royale: this player and 99 computer drivers in the world of every course. The world is built
- * while the screen is black (the course loading of the original).
+ * Battle Royale: online when the server answers (a match in progress, taking a bot's place, or a new one
+ * with 99 bots), else alone with 99 bots in the browser. The world is built while the screen is black (the
+ * course loading of the original).
  */
 async function startRoyale(character: number) {
   await fadeOut(FADES.toRace.out);
   const t0 = performance.now();
   const world = buildWorld(rom!);
+  const battleCourse = rom!.tracks.find((t) => t.battle)!;
+  const online = await royaleConnect(character, rom!.itemOdds(battleCourse)).catch(() => null);
   await hold(Math.max(0, FADES.toRace.black - (performance.now() - t0) / (1000 / 60)));
+  if (online) runRoyaleOnline(world, online);
+  else runRoyaleSolo(world, character);
+  // Over: the winner's flag (or our place) for a while, then back to the title.
+  const check = () => {
+    if (!race || !royaleOn) return;
+    const r = race.royaleResult;
+    if (!r || r.winner === null) { setTimeout(check, 250); return; }
+    status('results-hint', r.place === 1 ? 'VOCÊ VENCEU! Pressione Enter' : `Você ficou em ${r.place}º. Pressione Enter`);
+    setTimeout(() => {
+      if (!race || !royaleOn) return;
+      $('results').hidden = false;
+      onContinue = () => leaveRoyale();
+    }, 4000);
+  };
+  check();
+}
+
+/** Asks the server for a Battle Royale match; null if there is no server (or it doesn't answer in time). */
+async function royaleConnect(character: number, odds: ReturnType<SmkRom['itemOdds']>): Promise<Extract<ServerMsg, { t: 'royaleStart' }> | null> {
+  const client = new NetClient();
+  const timeout = <T>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<never>((_, no) => setTimeout(() => no(new Error('timeout')), ms))]);
+  try {
+    await timeout(client.opened, 3000);
+    const started = new Promise<Extract<ServerMsg, { t: 'royaleStart' }>>((resolve) => {
+      const off = client.on((m) => { if (m.t === 'royaleStart') { off(); resolve(m); } });
+    });
+    client.send({ t: 'royaleJoin', romCrc: rom!.crc, character, odds });
+    const msg = await timeout(started, 4000);
+    net = client;
+    selfId = msg.selfId;
+    client.onClose = () => { if (royaleOn) status('results-hint', 'Conexão perdida.'); };
+    return msg;
+  } catch {
+    client.close();
+    return null;
+  }
+}
+
+function runRoyaleOnline(world: WorldTrack, m: Extract<ServerMsg, { t: 'royaleStart' }>) {
+  if (m.broken.length) applyBreak(world, m.broken);
+  const state = new RoyaleState(world, m.seed);
+  const out = new Map(m.balloons);
+  // This browser runs the bots if the server says so (the bots still in).
+  const cpus = m.host === m.selfId
+    ? m.players.flatMap((p, slot) => (p.cpu && (out.get(p.id) ?? 1) > 0 ? [{ id: p.id, slot, skill: 0.6 + Math.random() * 0.4 }] : []))
+    : [];
+  gp = null;
+  royaleOn = true;
+  lastTrack = null;
+  startRace({
+    track: world, royale: state, cc: 100, players: m.players, items: true, battle: true, selfId: m.selfId,
+    slot: Math.max(0, m.players.findIndex((p) => p.id === m.selfId)), cpus, startInMs: m.startInMs, online: true,
+    start: m.at, balloons: m.balloons,
+  });
+}
+
+function runRoyaleSolo(world: WorldTrack, character: number) {
   const seed = Math.floor(Math.random() * 2 ** 31);
   const state = new RoyaleState(world, seed);
   const me: PlayerInfo = { id: 1, name: CHARACTER_NAMES[character], character, ready: true };
@@ -506,24 +573,16 @@ async function startRoyale(character: number) {
     cpus: bots.map((b, i) => ({ id: b.id, slot: slots[i + 1], skill: 0.6 + Math.random() * 0.4 })),
     startInMs: COUNTDOWN_MS, online: false,
   });
-  // Over: the winner's flag (or our place) for a while, then back to the title.
-  const check = () => {
-    if (!race || net || !royaleOn) return;
-    const r = race.royaleResult;
-    if (!r || r.winner === null) { setTimeout(check, 250); return; }
-    status('results-hint', r.place === 1 ? 'VOCÊ VENCEU! Pressione Enter' : `Você ficou em ${r.place}º. Pressione Enter`);
-    setTimeout(() => {
-      if (!race || !royaleOn) return;
-      $('results').hidden = false;
-      onContinue = () => leaveRoyale();
-    }, 4000);
-  };
-  check();
 }
 
 function leaveRoyale() {
   royaleOn = false;
-  void fadeOut(FADES.toBoards.out).then(() => { endRace(); menu?.toTitle(); });
+  void fadeOut(FADES.toBoards.out).then(() => {
+    endRace();
+    net?.close();
+    net = null;
+    menu?.toTitle();
+  });
 }
 
 /** Online GP points before the last race (for the "(+n)" on the standings). */
@@ -552,7 +611,7 @@ function endRace() {
 
 addEventListener('keydown', (e) => {
   // Esc leaves a solo race (back to the menu).
-  if (e.code === 'Escape' && race && !net && royaleOn) { leaveRoyale(); return; }
+  if (e.code === 'Escape' && race && royaleOn) { leaveRoyale(); return; }
   if (e.code === 'Escape' && race && !net) { gp = null; endRace(); menu?.toCupSelect(); }
 });
 

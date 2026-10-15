@@ -138,7 +138,11 @@ export type ClientMsg =
   /** This client's kart (or, from the host, CPU `cpu`) was hit by an entity. */
   | { t: 'hit'; entity: number; cpu?: number }
   /** Battle: this player lost a balloon to something that isn't a thrown item (a star kart, a fall). */
-  | { t: 'pop'; cpu?: number };
+  | { t: 'pop'; cpu?: number }
+  /** Battle Royale: into a match (one in progress, taking a bot's place, or a new one with 99 bots). */
+  | { t: 'royaleJoin'; romCrc: number; character: number; odds?: ItemOdds }
+  /** Battle Royale, out of balloons: where this player's camera is (the karts sent are the ones near it). */
+  | { t: 'focus'; x: number; y: number };
 
 export type ServerMsg =
   | { t: 'welcome'; id: number }
@@ -167,7 +171,15 @@ export type ServerMsg =
   | { t: 'despawn'; id: number; victim: number | null }
   /** A player used a self item (or lightning, which hits everyone else). */
   | { t: 'effect'; id: number; kind: EffectKind }
-  | { t: 'error'; message: string };
+  | { t: 'error'; message: string }
+  /**
+   * Battle Royale: the match (`seed` gives the safe area's circles), everyone in starting-place order
+   * (index = slot), who simulates the bots, balloons so far; `at` = where our kart is when taking over a bot.
+   */
+  | { t: 'royaleStart'; seed: number; startInMs: number; selfId: number; players: PlayerInfo[]; host: number;
+      balloons: [number, number][]; at?: { x: number; y: number; a: number }; broken: number[] }
+  /** Battle Royale: a person took bot `bot`'s place (its kart, its balloons). */
+  | { t: 'royaleSwap'; bot: number; player: PlayerInfo };
 
 /** Super Mario Kart's 8 drivers, in the game's order (matches CHARACTERS in src/rom/rom.ts). */
 export const CHARACTER_NAMES = ['Mario', 'Luigi', 'Bowser', 'Peach', 'DK Jr.', 'Koopa', 'Toad', 'Yoshi'];

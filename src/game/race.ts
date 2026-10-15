@@ -64,6 +64,9 @@ export interface RaceOptions {
    * Battle Mode (set `battle` too). Slots are starting places in the world.
    */
   royale?: RoyaleState;
+  /** Battle Royale, taking over a bot: where our kart is; and everyone's balloons so far. */
+  start?: { x: number; y: number; a: number };
+  balloons?: [number, number][];
 }
 
 /**
@@ -164,6 +167,11 @@ export class Race {
       return k;
     };
     this.kart = place(createKart(o.track, o.slot, charOf(o.selfId), o.cc), o.slot);
+    if (o.start) {
+      Object.assign(this.kart, { x: o.start.x, y: o.start.y, angle: o.start.a });
+      this.kart.safe = { x: o.start.x, y: o.start.y, angle: o.start.a };
+    }
+    for (const [id, n] of o.balloons ?? []) this.balloons.set(id, n);
     this.cpus = o.cpus.map((c) => {
       const kart = place(createKart(o.track, c.slot, charOf(c.id), o.cc), c.slot);
       if (o.items) kart.coins = START_COINS;
@@ -187,7 +195,11 @@ export class Race {
       this.unsubs.push(o.net.on((m) => {
         if (m.t === 'states') this.remote.push(m.karts, this.local);
         else if (m.t === 'finished') this.noteFinisher(m.id, m.place);
-        else if (m.t === 'balloons') {
+        else if (o.royale) {
+          if (m.t === 'cpuHost' && m.id === o.selfId) this.adoptCpus();
+          else if (m.t === 'royaleSwap') this.swapIn(m.bot, m.player);
+          else if (m.t === 'break') { applyBreak(o.track, m.tiles); o.renderer.updateTiles(o.track, m.tiles); o.royale.nav.refresh(m.tiles); }
+        } else if (m.t === 'balloons') {
           this.balloons.set(m.id, m.n);
           // Out of balloons: we watch the rest of the battle.
           if (m.id === o.selfId && m.n === 0 && !this.out) { this.out = true; this.o.spectate = true; }
@@ -434,6 +446,7 @@ export class Race {
         const w = this.watched(alive);
         if (w) this.placeCamera(false, w.x, w.y, w.a);
         this.o.renderer.mapOrigin = this.mapOriginAt(this.cam.x, this.cam.y);
+        if (this.o.net && this.frame % 30 === 0) this.o.net.send({ t: 'focus', x: Math.round(this.cam.x), y: Math.round(this.cam.y) });
         return;
       }
     }
@@ -612,6 +625,12 @@ export class Race {
           c.pickupCooldown = 6;
         }
       }
+      // A person with a star running into this bot.
+      for (const r of remotes) {
+        if (!(r.e & EFFECT_STAR) || r.f > 0 || isInvincible(k) || k.spin > 0 || Math.hypot(r.x - k.x, r.y - k.y) >= 10) continue;
+        o.channel.send({ t: 'pop', cpu: c.id });
+        spinOut(k);
+      }
       // A star: spin out and pop whoever it touches (other bots here; people check for themselves).
       if (k.star > 0) {
         for (const v of live) {
@@ -625,6 +644,21 @@ export class Race {
       (o.net ?? o.channel).send({ t: 'cpu', karts: live.map((c) => netState(c.id, c.kart)) });
     }
   }
+
+  /** Battle Royale: a person took bot `bot`'s place (if we were running it, we stop). */
+  private swapIn(bot: number, player: PlayerInfo) {
+    const o = this.o;
+    const i = o.players.findIndex((p) => p.id === bot);
+    if (i >= 0) o.players[i] = player; else o.players.push(player);
+    const b = this.balloons.get(bot);
+    if (b !== undefined) { this.balloons.delete(bot); this.balloons.set(player.id, b); }
+    this.cpus = this.cpus.filter((c) => c.id !== bot);
+    this.local.delete(bot);
+    this.remote.forget(bot);
+    if (!o.drivers.has(player.character)) this.onNewDriver?.(player.character);
+  }
+  /** Called when a driver not loaded yet comes in (online Battle Royale): load its pictures. */
+  onNewDriver: ((character: number) => void) | null = null;
 
   /** Battle Royale: the sky (and music) of the course we're on, or nearest to. */
   private followRegion(force: boolean) {
@@ -686,6 +720,18 @@ export class Race {
     for (const r of this.remote.sample()) {
       const p = this.player(r.id);
       if (!p?.cpu || mine.has(r.id)) continue;
+      if (o.royale) {
+        // A Battle Royale bot still in: carry on from where it was.
+        if ((this.balloons.get(r.id) ?? 1) <= 0) continue;
+        const kart = createKart(o.track, 0, p.character, o.cc);
+        Object.assign(kart, { x: r.x, y: r.y, angle: r.a, speed: r.s });
+        kart.safe = { x: r.x, y: r.y, angle: r.a };
+        const bot = new BotDriver(o.royale.world, r.id, 0.6 + Math.random() * 0.4, Math.random);
+        this.cpus.push({ id: r.id, kart, driver: new CpuDriver(o.track, kart, 0.8), finishedAt: 0, bot, item: null, rollingUntil: 0, pickupCooldown: 0 });
+        this.local.add(r.id);
+        this.remote.forget(r.id);
+        continue;
+      }
       const kart = createKart(o.track, 0, p.character, o.cc);
       Object.assign(kart, { x: r.x, y: r.y, angle: r.a, speed: r.s, lap: r.lap, progress: r.p });
       kart.safe = { x: r.x, y: r.y, angle: r.a };

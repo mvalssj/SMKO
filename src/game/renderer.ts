@@ -299,6 +299,11 @@ export class Renderer {
     }
   }
 
+  /** Adds a driver's frames (someone with a driver nobody had yet came into an online Battle Royale). */
+  addDriver(character: number, sprites: DriverSprites | null) {
+    if (sprites) this.drivers.set(character, withRowHeights(sprites));
+  }
+
   /** The sky band's two scenery layers and the color behind them (the world changes them course by course). */
   setSky(sky: Pick<Track, 'background' | 'backColor'>) {
     const gl = this.gl;

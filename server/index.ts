@@ -12,6 +12,7 @@ import {
   type ClientMsg, type Cc, type ItemOdds, type KartNetState, type Standing, type Phase, type PlayerInfo, type ResultEntry, type ServerMsg,
 } from '../shared/protocol';
 import { DEFAULT_ODDS, ItemAuthority, validOdds } from '../shared/items';
+import { royaleClose, royaleMessage } from './royale';
 
 const PORT = Number(process.env.PORT ?? 3077);
 const DIST = fileURLToPath(new URL('../dist', import.meta.url));
@@ -87,6 +88,8 @@ wss.on('connection', (ws) => {
   ws.on('message', (raw) => {
     let msg: ClientMsg;
     try { msg = JSON.parse(String(raw)); } catch { return; }
+    // Battle Royale matches are their own thing (server/royale.ts).
+    if (!room && msg && typeof msg === 'object' && royaleMessage(ws, id, msg)) return;
 
     if (msg.t === 'join') {
       if (room) return;
@@ -242,6 +245,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    royaleClose(id);
     if (!room) return;
     const r = room;
     r.players.delete(id);
