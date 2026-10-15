@@ -76,8 +76,8 @@ button.character:disabled { opacity: 0.35; }
 }
 /* --ar: the race picture's shape. 256x224 with the SNES's 8:7 pixels, or 348x224 in widescreen (16:9, the
    pixels keep their shape: the extra columns show more of the course). */
-:root { --ar: 2048 / 1568; }
-:root.wide { --ar: 2784 / 1568; }
+:root { --ar: 2048 / 1568; --pad: 0%; }
+:root.wide { --ar: 2784 / 1568; --pad: 13.218%; }
 #viewport {
   position: relative;
   width: min(100vw, 100vh * (var(--ar)));
@@ -89,8 +89,8 @@ button.character:disabled { opacity: 0.35; }
   image-rendering: pixelated;
 }
 #viewport canvas#place-fx { mix-blend-mode: plus-lighter; pointer-events: none; }
-/* Boards and podium fill the same 16:9 surface as the race when wide mode is enabled. */
-#viewport canvas#board { z-index: 1; }
+/* The original board/podium picture stays fully visible and pixel-correct inside the wide stage. */
+#viewport canvas#board { z-index: 1; left: var(--pad); right: var(--pad); width: auto; }
 /* Spectator line (everything else of the HUD is drawn in the picture). */
 #hud-note {
   position: absolute; left: 0; right: 0; bottom: 2%; text-align: center; pointer-events: none;
@@ -113,12 +113,13 @@ button.character:disabled { opacity: 0.35; }
   display: grid;
   place-items: center;
 }
-/* The menu renderer is 256 pixels wide, but its wide presentation deliberately fills the full 16:9 stage
-   just like the race, rankings and ceremony. */
+/* Menus retain their complete native composition in the wide stage; no horizontal stretching/cropping. */
 #menu-canvas {
   display: block;
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   height: 100%;
+  aspect-ratio: 2048 / 1568;
   image-rendering: pixelated;
 }
 /* Small bar over the top-right corner: room code, controls. */

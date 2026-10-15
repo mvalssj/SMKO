@@ -659,8 +659,8 @@ $('btn-fullscreen').addEventListener('click', () => {
     .catch(() => {});
 });
 
-// Widescreen: the race grows to 348x224 (more course at the sides). Menus, boards and ceremony use the same
-// 16:9 stage so changing this option is consistent throughout the game.
+// Widescreen: the race grows to 348x224 (more course at the sides). ROM-native menus, rankings and the
+// ceremony are centred in the same 16:9 stage so their complete artwork is never stretched or cropped.
 const WIDE_W = 348;
 let wide = localStorageGet('smko-wide') === '1';
 function raceWidth() { return wide ? WIDE_W : SCREEN_W; }
