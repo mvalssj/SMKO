@@ -3,6 +3,8 @@ import type { ClientMsg, KartNetState, ServerMsg } from '../../shared/protocol';
 type Handler = (msg: ServerMsg) => void;
 
 export class NetClient {
+  /** Shows a message from the server's administrator (or why we were sent away) over the game. */
+  static notice: ((text: string) => void) | null = null;
   private ws: WebSocket;
   private handlers = new Set<Handler>();
   readonly opened: Promise<void>;
@@ -17,6 +19,7 @@ export class NetClient {
     });
     this.ws.addEventListener('message', (e) => {
       const msg = JSON.parse(e.data) as ServerMsg;
+      if (msg.t === 'notice') NetClient.notice?.(msg.message);
       for (const h of this.handlers) h(msg);
     });
     this.ws.addEventListener('close', () => this.onClose?.());

@@ -13,6 +13,11 @@ import {
 } from '../shared/protocol';
 import { DEFAULT_ODDS, ItemAuthority, validOdds } from '../shared/items';
 import { royaleClose, royaleMessage } from './royale';
+import { COURSE_NAMES } from '../shared/names';
+import {
+  adminConnect, adminDisconnect, adminHttp, adminIncoming, adminOut, adminTelemetry, adminTick, adminWarn, record, registerAdminSource, settings,
+  type RoomView,
+} from './admin';
 
 const PORT = Number(process.env.PORT ?? 3077);
 const DIST = fileURLToPath(new URL('../dist', import.meta.url));
@@ -67,6 +72,7 @@ const MIME: Record<string, string> = {
 };
 
 const http = createServer((req, res) => {
+  if (adminHttp(req, res)) return;
   const url = new URL(req.url ?? '/', 'http://x');
   let file = normalize(join(DIST, decodeURIComponent(url.pathname)));
   if (!file.startsWith(DIST)) { res.writeHead(403).end(); return; }
@@ -81,13 +87,18 @@ const http = createServer((req, res) => {
 
 const wss = new WebSocketServer({ server: http, path: '/ws' });
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   const id = nextId++;
+  if (!adminConnect(ws, req, id)) return;
   let room: Room | null = null;
 
   ws.on('message', (raw) => {
     let msg: ClientMsg;
-    try { msg = JSON.parse(String(raw)); } catch { return; }
+    const text = String(raw);
+    try { msg = JSON.parse(text); } catch { return; }
+    if (!msg || typeof msg !== 'object') return;
+    adminIncoming(id, text.length, msg);
+    if (msg.t === 'telemetry') { adminTelemetry(id, msg); return; }
     // Battle Royale matches are their own thing (server/royale.ts).
     if (!room && msg && typeof msg === 'object' && royaleMessage(ws, id, msg)) return;
 
@@ -96,6 +107,7 @@ wss.on('connection', (ws) => {
       const code = String(msg.room ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
       if (!code) return send(ws, { t: 'error', message: 'Código de sala inválido.' });
       let r = rooms.get(code);
+      if (!r && rooms.size >= settings.maxRooms) return send(ws, { t: 'error', message: 'Servidor cheio: o limite de salas foi atingido. Tente mais tarde.' });
       if (!r) {
         r = { code, romCrc: msg.romCrc >>> 0, hostId: id, phase: 'lobby', track: 0, players: new Map(),
               raceStart: 0, finishOrder: [], firstFinishAt: 0, timer: null, items: null, cpuHost: 0, grid: [], gp: null, nextRace: null,
@@ -103,7 +115,8 @@ wss.on('connection', (ws) => {
         rooms.set(code, r);
       }
       if (r.romCrc !== msg.romCrc >>> 0) return send(ws, { t: 'error', message: 'Sua ROM é diferente da ROM do anfitrião da sala (use a mesma versão/região).' });
-      if (humans(r).length >= MAX_PLAYERS) return send(ws, { t: 'error', message: `Sala cheia (${MAX_PLAYERS} jogadores).` });
+      const limit = Math.min(MAX_PLAYERS, settings.maxRoomPlayers);
+      if (humans(r).length >= limit) return send(ws, { t: 'error', message: `Sala cheia (${limit} jogadores).` });
 
       // The cursor starts on the first driver nobody has confirmed.
       const used = new Set(humans(r).filter((p) => p.info.ready).map((p) => p.info.character));
@@ -130,6 +143,8 @@ wss.on('connection', (ws) => {
     const isHost = r.hostId === id;
     // Spectators only watch: nothing they send touches the race.
     if (me.info.spectator && msg.t !== 'character' && msg.t !== 'lobby') return;
+    // Only the host chooses the course and starts (the game never sends these otherwise).
+    if (!isHost && (msg.t === 'track' || msg.t === 'start')) { adminWarn(id, 'order'); return; }
 
     switch (msg.t) {
       case 'track':
@@ -166,6 +181,11 @@ wss.on('connection', (ws) => {
           const odds = tracks.map((_, i) => (Array.isArray(msg.odds) && validOdds(msg.odds[i]) ? msg.odds[i] : DEFAULT_ODDS));
           const cc: Cc = msg.cc === 50 || msg.cc === 150 ? msg.cc : 100;
           const battle = msg.battle === true;
+          const mode = battle ? 'battle' : tracks.length > 1 ? 'gp' : 'vs';
+          if (!settings.modes[mode]) {
+            send(ws, { t: 'error', message: 'Este modo foi desativado pelo administrador do servidor.' });
+            break;
+          }
           // Battle Mode is one arena, people only (no CPUs in the original's battles).
           r.gp = { tracks: battle ? tracks.slice(0, 1) : tracks, odds, round: 0, points: new Map(), cc, cpus: msg.cpus === true && !battle, battle };
           assignDrivers(r);
@@ -191,6 +211,7 @@ wss.on('connection', (ws) => {
         break;
 
       case 'cpu':
+        if (id !== r.cpuHost && r.phase === 'racing') adminWarn(id, 'order');
         if (id !== r.cpuHost || (r.phase !== 'countdown' && r.phase !== 'racing') || !Array.isArray(msg.karts)) break;
         for (const k of msg.karts) {
           const cpu = r.players.get(k?.id);
@@ -233,7 +254,7 @@ wss.on('connection', (ws) => {
         if (!who || (msg.cpu !== undefined && !who.info.cpu)) break;
         if (r.phase !== 'racing' || who.finishMs !== null) break;
         const elapsed = Date.now() - r.raceStart;
-        if ((who.kart?.lap ?? 0) < TOTAL_LAPS || elapsed < MIN_RACE_MS) break;
+        if ((who.kart?.lap ?? 0) < TOTAL_LAPS || elapsed < MIN_RACE_MS) { if (msg.cpu === undefined) adminWarn(id, 'order'); break; }
         // Trust the client's own timer, but not beyond what the server observed.
         who.finishMs = clamp(Math.round(msg.timeMs), MIN_RACE_MS, elapsed + 1000);
         r.finishOrder.push(who.id);
@@ -245,6 +266,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    adminDisconnect(id);
     royaleClose(id);
     if (!room) return;
     const r = room;
@@ -313,13 +335,47 @@ function startRace(r: Room) {
     if (to === 'all') broadcast(r, msg, except);
     else { const ws = r.players.get(to)?.ws; if (ws?.readyState === WebSocket.OPEN) send(ws, msg); }
   }, r.raceStart);
+  r.items.onReject = (who) => adminWarn(who, 'item');
+  // Statistics: the course and the drivers people picked.
+  for (const p of racers(r)) if (!p.info.cpu) record('pick', { mode: modeOf(r), course: COURSE_NAMES[r.track] ?? '?', character: p.info.character });
   for (const id of ids) r.items.addPlayer(id);
   broadcastRoom(r);
   broadcast(r, raceMsg(r, COUNTDOWN_MS));
 
   if (r.timer) clearInterval(r.timer);
-  r.timer = setInterval(() => tick(r), 1000 / NET_HZ);
+  r.timer = setInterval(() => {
+    const t0 = performance.now();
+    tick(r);
+    adminTick(performance.now() - t0);
+  }, 1000 / NET_HZ);
 }
+
+function modeOf(r: Room): RoomView['mode'] {
+  if (r.phase === 'lobby' || !r.gp) return 'lobby';
+  return r.gp.battle ? 'battle' : r.gp.tracks.length > 1 ? 'gp' : 'vs';
+}
+
+/** What the administrator panel shows of the rooms. */
+registerAdminSource({
+  rooms: () => [...rooms.values()].map((r) => ({
+    code: r.code, mode: modeOf(r), phase: r.phase, course: COURSE_NAMES[r.track] ?? '?', cc: r.gp?.cc ?? null,
+    round: r.gp ? r.gp.round + 1 : 0, rounds: r.gp?.tracks.length ?? 0, host: r.hostId,
+    cpuHost: r.phase === 'countdown' || r.phase === 'racing' ? r.cpuHost : null,
+    raceStart: r.phase === 'lobby' ? null : r.raceStart,
+    players: [...r.players.values()].filter((p) => !p.info.cpu || r.phase !== 'lobby').map((p) => ({
+      id: p.id, character: p.info.character, cpu: !!p.info.cpu, spectator: !!p.info.spectator, ready: !!p.info.ready,
+    })),
+  })),
+  liveRoom: (code) => {
+    const r = rooms.get(code);
+    if (!r) return null;
+    return {
+      w: 1024, h: 1024,
+      karts: [...r.players.values()].flatMap((p) => (p.kart && !(r.gp?.battle && r.balloons.get(p.id) === 0)
+        ? [{ id: p.id, x: Math.round(p.kart.x), y: Math.round(p.kart.y), cpu: !!p.info.cpu, character: p.info.character }] : [])),
+    };
+  },
+});
 
 function raceMsg(r: Room, startInMs: number): ServerMsg {
   const gp = r.gp!;
@@ -408,7 +464,11 @@ function updateKart(r: Room, p: Player, k: KartNetState) {
     const dist = Math.hypot(k.x - p.kart.x, k.y - p.kart.y);
     const rescued = p.kart.f > 0 || k.f > 0;
     // A kart put back on the course by Lakitu (or a CPU taken back to its path) is accepted after a moment.
-    if (!rescued && dist > MAX_KART_SPEED * dt + MOVE_SLACK && (p.rejected = (p.rejected ?? 0) + 1) < 10) return;
+    if (!rescued && dist > MAX_KART_SPEED * dt + MOVE_SLACK && (p.rejected = (p.rejected ?? 0) + 1) < 10) {
+      // A warning only for a jump far beyond what messages arriving in a bunch (a bad connection) explain.
+      if (p.ws && dist > 2 * (MAX_KART_SPEED * dt + MOVE_SLACK) + 64) adminWarn(p.id, 'speed');
+      return;
+    }
     p.rejected = 0;
   }
   p.lastStateAt = now;
@@ -430,6 +490,10 @@ function removeCpus(r: Room) {
 function endRace(r: Room) {
   if (r.timer) clearInterval(r.timer);
   r.timer = null;
+  record('match', {
+    mode: modeOf(r), course: COURSE_NAMES[r.track] ?? '?', cc: r.gp?.cc ?? 100, ms: Math.max(0, Date.now() - r.raceStart),
+    people: racers(r).filter((p) => !p.info.cpu).length, bots: racers(r).filter((p) => p.info.cpu).length,
+  });
   r.phase = 'results';
   if (r.gp?.battle) {
     // Winner first (most balloons left), then the last ones out; the time is how long each lasted.
@@ -480,15 +544,17 @@ function broadcastRoom(r: Room) {
 
 function broadcast(r: Room, msg: ServerMsg, exceptId?: number) {
   const data = JSON.stringify(msg);
-  for (const p of r.players.values()) if (p.id !== exceptId && p.ws?.readyState === WebSocket.OPEN) p.ws.send(data);
+  for (const p of r.players.values()) if (p.id !== exceptId && p.ws?.readyState === WebSocket.OPEN) { p.ws.send(data); adminOut(data.length); }
 }
 
 function send(ws: WebSocket, msg: ServerMsg) {
-  ws.send(JSON.stringify(msg));
+  const data = JSON.stringify(msg);
+  ws.send(data);
+  adminOut(data.length);
 }
 
 function clamp(v: number, min: number, max: number) {
   return Math.min(max, Math.max(min, v));
 }
 
-http.listen(PORT, () => console.log(`SMKO servidor em http://localhost:${PORT}  (WebSocket em /ws)`));
+http.listen(PORT, () => console.log(`SMKO servidor em http://localhost:${PORT}  (WebSocket em /ws, painel em /admin${process.env.SMKO_ADMIN_PASSWORD ? '' : ' — defina SMKO_ADMIN_PASSWORD para ativar'})`));

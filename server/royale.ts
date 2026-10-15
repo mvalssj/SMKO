@@ -10,7 +10,12 @@ import {
   type ClientMsg, type ItemOdds, type KartNetState, type PlayerInfo, type ServerMsg,
 } from '../shared/protocol';
 import { DEFAULT_ODDS, ItemAuthority, validOdds } from '../shared/items';
-import { ROYALE_PLAYERS, RoyaleAuthority, WORLD_COLS, WORLD_H, WORLD_ROWS, WORLD_W, zoneAt } from '../shared/royale';
+import {
+  COURSE_TILES, GAP_TILES, GRID_COLS, GRID_ROWS, MARGIN_TILES, ROYALE_PLAYERS, RoyaleAuthority, WORLD_COLS, WORLD_H, WORLD_ROWS, WORLD_W,
+  worldCourseAt, zoneAt,
+} from '../shared/royale';
+import { COURSE_NAMES } from '../shared/names';
+import { adminOut, adminTick, adminWarn, record, registerAdminSource, settings } from './admin';
 
 /** Karts within this distance of a player are sent every tick; the others every FAR_EVERY ticks. */
 const NEAR_PX = 1600;
@@ -34,6 +39,11 @@ interface RPlayer {
 }
 
 interface Match {
+  /** Number shown in the administrator panel. */
+  id: number;
+  createdAt: number;
+  /** Everyone who played in it as a person (for the statistics). */
+  people: Set<number>;
   romCrc: number;
   seed: number;
   start: number;
@@ -53,6 +63,7 @@ const matches = new Set<Match>();
 /** Which match a connection is in. */
 const byConn = new Map<number, Match>();
 let nextBot = 0;
+let nextMatch = 1;
 
 /** Handles a Battle Royale message from connection `id`; false if it isn't one (the room server's). */
 export function royaleMessage(ws: WebSocket, id: number, msg: ClientMsg): boolean {
@@ -73,6 +84,7 @@ export function royaleMessage(ws: WebSocket, id: number, msg: ClientMsg): boolea
       updateKart(m, me, { ...msg.k, id });
       break;
     case 'cpu':
+      if (!isHost && racing) adminWarn(id, 'order');
       if (!isHost || !Array.isArray(msg.karts)) break;
       for (const k of msg.karts.slice(0, ROYALE_PLAYERS)) {
         const p = m.players.get(k?.id);
@@ -134,23 +146,40 @@ export function royaleClose(id: number) {
 
 function join(ws: WebSocket, id: number, romCrc: number, wanted: number, odds: ItemOdds) {
   const character = Number.isInteger(wanted) && wanted >= 0 && wanted < CHARACTER_NAMES.length ? wanted : 0;
+  const refuse = (message: string) => {
+    const data = JSON.stringify({ t: 'error', message } satisfies ServerMsg);
+    if (ws.readyState === WebSocket.OPEN) { ws.send(data); adminOut(data.length); }
+  };
+  if (!settings.modes.royale) return refuse('O Battle Royale online foi desativado pelo administrador do servidor.');
   const now = Date.now();
-  // A match in progress with the same ROM, still early enough, and a bot to replace.
+  // A match in progress with the same ROM, still early enough, room for one more person, and a bot to replace.
   const open = [...matches].find((m) => m.romCrc === romCrc && m.royale.winner === null
-    && zoneAt(m.royale.circles, now - m.start).phase < JOIN_UNTIL_PHASE && bots(m, true).length > 0);
+    && zoneAt(m.royale.circles, now - m.start, m.royale.zoneScale).phase < JOIN_UNTIL_PHASE
+    && humans(m).length < settings.royaleMaxPeople && bots(m, true).length > 0);
   if (open) takeOver(open, ws, id, character);
+  else if (matches.size >= settings.maxMatches) refuse('Servidor cheio: o limite de partidas de Battle Royale foi atingido.');
   else create(ws, id, romCrc, character, odds);
 }
 
 function create(ws: WebSocket, id: number, romCrc: number, character: number, odds: ItemOdds) {
   const seed = Math.floor(Math.random() * 2 ** 31);
   const start = Date.now() + COUNTDOWN_MS;
-  const send = (to: number | 'all', msg: ServerMsg) => (to === 'all' ? broadcast(m, msg) : sendTo(m, to, msg));
+  const send = (to: number | 'all', msg: ServerMsg) => {
+    // Statistics: how long each person lasted.
+    if (msg.t === 'royaleOut' && m.people.has(msg.id)) record('survival', { ms: Math.max(0, Date.now() - m.start), won: false });
+    if (to === 'all') broadcast(m, msg); else sendTo(m, to, msg);
+  };
   const items = new ItemAuthority(odds, send, start, Date.now, Math.random, 'middle', WORLD_COLS * WORLD_ROWS);
-  const royale = new RoyaleAuthority(seed, start, send);
+  items.onReject = (who) => adminWarn(who, 'item');
+  const royale = new RoyaleAuthority(seed, start, send, Date.now, settings.zoneScale);
   const m: Match = {
+    id: nextMatch++, createdAt: Date.now(), people: new Set([id]),
     romCrc, seed, start, players: new Map(), order: [], host: id, items, royale, broken: new Set(),
-    timer: setInterval(() => tick(m), 1000 / NET_HZ), tickN: 0, overAt: 0,
+    timer: setInterval(() => {
+      const t0 = performance.now();
+      tick(m);
+      adminTick(performance.now() - t0);
+    }, 1000 / NET_HZ), tickN: 0, overAt: 0,
   };
   const people: RPlayer[] = [{ id, ws, info: { id, name: CHARACTER_NAMES[character], character, ready: true }, kart: null }];
   for (let i = 0; i < ROYALE_PLAYERS - 1; i++) {
@@ -175,7 +204,7 @@ function create(ws: WebSocket, id: number, romCrc: number, character: number, od
 
 /** A person takes the place of a bot still in the match (the one furthest from the people, inside the safe area). */
 function takeOver(m: Match, ws: WebSocket, id: number, character: number) {
-  const zone = zoneAt(m.royale.circles, Date.now() - m.start).now;
+  const zone = zoneAt(m.royale.circles, Date.now() - m.start, m.royale.zoneScale).now;
   const people = humans(m).flatMap((p) => (p.kart ? [p.kart] : []));
   const score = (b: RPlayer) => {
     if (!b.kart) return 0;
@@ -190,6 +219,7 @@ function takeOver(m: Match, ws: WebSocket, id: number, character: number) {
   m.order[m.order.indexOf(bot.id)] = id;
   m.items.rename(bot.id, id);
   m.royale.rename(bot.id, id);
+  m.people.add(id);
   byConn.set(id, m);
   broadcast(m, { t: 'royaleSwap', bot: bot.id, player: info }, id);
   sendStart(m, id, bot.kart ? { x: bot.kart.x, y: bot.kart.y, a: bot.kart.a } : undefined);
@@ -200,7 +230,7 @@ function sendStart(m: Match, to: number, at?: { x: number; y: number; a: number 
   sendTo(m, to, {
     t: 'royaleStart', seed: m.seed, startInMs: m.start - Date.now(), selfId: to,
     players: m.order.flatMap((id) => { const p = m.players.get(id); return p ? [p.info] : []; }),
-    host: m.host, balloons: [...m.royale.balloons], at, broken: [...m.broken],
+    host: m.host, balloons: [...m.royale.balloons], at, broken: [...m.broken], zoneScale: m.royale.zoneScale,
   });
 }
 
@@ -209,6 +239,16 @@ function tick(m: Match) {
   m.items.tick();
   m.royale.tick();
   if (m.royale.winner !== null) {
+    if (!m.overAt) {
+      // Statistics: who won (a person or a bot), where the safe area closed, how long it took.
+      const w = m.royale.winner, last = m.royale.circles[m.royale.circles.length - 1];
+      const person = m.people.has(w);
+      if (person) record('survival', { ms: Math.max(0, Date.now() - m.start), won: true });
+      record('royale', {
+        ms: Math.max(0, Date.now() - m.start), people: m.people.size, bots: ROYALE_PLAYERS - m.people.size,
+        winner: w < 0 ? 'none' : person ? 'person' : 'bot', zone: worldCourseAt(last.x, last.y),
+      });
+    }
     m.overAt ||= Date.now();
     if (Date.now() - m.overAt > OVER_KEEP_MS) end(m);
   }
@@ -235,7 +275,11 @@ function updateKart(m: Match, p: RPlayer, k: KartNetState) {
     const dt = (now - p.lastStateAt) / 1000;
     const dist = Math.hypot(k.x - p.kart.x, k.y - p.kart.y);
     const rescued = p.kart.f > 0 || k.f > 0;
-    if (!rescued && dist > MAX_KART_SPEED * dt + MOVE_SLACK && (p.rejected = (p.rejected ?? 0) + 1) < 10) return;
+    if (!rescued && dist > MAX_KART_SPEED * dt + MOVE_SLACK && (p.rejected = (p.rejected ?? 0) + 1) < 10) {
+      // A warning only for a jump far beyond what messages arriving in a bunch (a bad connection) explain.
+      if (p.ws && dist > 2 * (MAX_KART_SPEED * dt + MOVE_SLACK) + 64) adminWarn(p.id, 'speed');
+      return;
+    }
     p.rejected = 0;
   }
   p.lastStateAt = now;
@@ -262,7 +306,7 @@ function bots(m: Match, alive = false) {
 
 function broadcast(m: Match, msg: ServerMsg, exceptId?: number) {
   const data = JSON.stringify(msg);
-  for (const p of m.players.values()) if (p.id !== exceptId && p.ws?.readyState === WebSocket.OPEN) p.ws.send(data);
+  for (const p of m.players.values()) if (p.id !== exceptId && p.ws?.readyState === WebSocket.OPEN) { p.ws.send(data); adminOut(data.length); }
 }
 
 /** To one player; a bot's news (its item, its coins) goes to the browser running the bots, marked as the bot's. */
@@ -272,8 +316,34 @@ function sendTo(m: Match, to: number, msg: ServerMsg) {
     if (msg.t === 'item' || msg.t === 'coins') sendTo(m, m.host, { ...msg, cpu: to });
     return;
   }
-  if (p?.ws?.readyState === WebSocket.OPEN) p.ws.send(JSON.stringify(msg));
+  if (p?.ws?.readyState === WebSocket.OPEN) { const data = JSON.stringify(msg); p.ws.send(data); adminOut(data.length); }
 }
+
+/** What the administrator panel shows of the matches. */
+registerAdminSource({
+  matches: () => [...matches].map((m) => {
+    const z = zoneAt(m.royale.circles, Date.now() - m.start, m.royale.zoneScale);
+    const all = bots(m), alive = m.royale.alive();
+    return {
+      id: m.id, createdAt: m.createdAt, start: m.start, zonePhase: z.phase, shrinking: z.shrinking, zoneScale: m.royale.zoneScale,
+      alive: alive.length, bots: all.length, botsAlive: bots(m, true).length, host: m.host, winner: m.royale.winner,
+      people: humans(m).map((p) => ({ id: p.id, character: p.info.character, alive: (m.royale.balloons.get(p.id) ?? 0) > 0, balloons: m.royale.balloons.get(p.id) ?? 0 })),
+    };
+  }),
+  liveMatch: (id) => {
+    const m = [...matches].find((x) => x.id === id);
+    if (!m) return null;
+    const z = zoneAt(m.royale.circles, Date.now() - m.start, m.royale.zoneScale);
+    const round = (c: { x: number; y: number; r: number }) => ({ x: Math.round(c.x), y: Math.round(c.y), r: Math.round(c.r) });
+    return {
+      w: WORLD_W, h: WORLD_H,
+      grid: { cols: GRID_COLS, rows: GRID_ROWS, course: COURSE_TILES * 8, gap: GAP_TILES * 8, margin: MARGIN_TILES * 8, names: COURSE_NAMES },
+      zone: round(z.now), next: round(z.next),
+      karts: [...m.players.values()].flatMap((p) => (p.kart && (m.royale.balloons.get(p.id) ?? 0) > 0
+        ? [{ id: p.id, x: Math.round(p.kart.x), y: Math.round(p.kart.y), cpu: !!p.info.cpu, character: p.info.character }] : [])),
+    };
+  },
+});
 
 function clamp(v: number, min: number, max: number) {
   return Math.min(max, Math.max(min, v));

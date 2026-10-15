@@ -75,9 +75,9 @@ export function zoneCircles(seed: number): Circle[] {
   return circles;
 }
 
-/** The safe area `ms` after the start. */
-export function zoneAt(circles: Circle[], ms: number): ZoneNow {
-  let t = Math.max(0, ms);
+/** The safe area `ms` after the start; `scale` stretches every wait and shrink (2 = twice as slow). */
+export function zoneAt(circles: Circle[], ms: number, scale = 1): ZoneNow {
+  let t = Math.max(0, ms) / scale;
   for (let i = 0; i < PHASES.length; i++) {
     const p = PHASES[i], from = circles[i], to = circles[i + 1];
     if (t < p.wait) return { now: from, next: to, phase: i, shrinking: false };
@@ -90,6 +90,16 @@ export function zoneAt(circles: Circle[], ms: number): ZoneNow {
   }
   const last = circles[circles.length - 1];
   return { now: last, next: last, phase: PHASES.length, shrinking: false };
+}
+
+/** Which course (index into COURSE_NAMES, shared/names.ts) is at a world position; -1 on the roads. */
+export function worldCourseAt(x: number, y: number): number {
+  const step = COURSE_TILES + GAP_TILES;
+  const tx = x / TILE_PX - MARGIN_TILES, ty = y / TILE_PX - MARGIN_TILES;
+  const c = Math.floor(tx / step), r = Math.floor(ty / step);
+  if (c < 0 || r < 0 || c >= GRID_COLS || r >= GRID_ROWS || tx - c * step >= COURSE_TILES || ty - r * step >= COURSE_TILES) return -1;
+  // A cup per row (its five tracks), its battle course last.
+  return c < 5 ? r * 5 + c : 20 + r;
 }
 
 export function insideZone(z: Circle, x: number, y: number): boolean {
@@ -116,6 +126,8 @@ export class RoyaleAuthority {
     private startMs: number,
     private send: Send,
     private now: () => number = Date.now,
+    /** How slowly the safe area closes (1 = normal; set by the server's administrator). */
+    readonly zoneScale = 1,
   ) {
     this.circles = zoneCircles(seed);
   }
@@ -177,7 +189,7 @@ export class RoyaleAuthority {
   tick() {
     if (this.winner !== null) return;
     const now = this.now();
-    const zone = zoneAt(this.circles, now - this.startMs).now;
+    const zone = zoneAt(this.circles, now - this.startMs, this.zoneScale).now;
     for (const [id, n] of this.balloons) {
       if (n <= 0) continue;
       const p = this.pos.get(id);

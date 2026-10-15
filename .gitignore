@@ -5,3 +5,5 @@ track-dump/
 *.sfc
 *.smc
 .scratch/
+# Server data: administrator settings, bans, statistics
+data/

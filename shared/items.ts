@@ -36,6 +36,8 @@ export class ItemAuthority {
   private usedBoxes = new Map<number, { tiles: number[]; restoreAt: number }>();
   private takenCoins = new Set<number>();
   private nextEntity = 1;
+  /** Told when a player does something the game never does (uses an item they don't have). */
+  onReject: ((id: number, why: 'item') => void) | null = null;
 
   constructor(
     private odds: ItemOdds,
@@ -128,7 +130,7 @@ export class ItemAuthority {
   }
 
   private onUse(id: number, p: PlayerItems, msg: Extract<ClientMsg, { t: 'use' }>) {
-    if (!p.item || p.rolled) return;
+    if (!p.item || p.rolled) { this.onReject?.(id, 'item'); return; }
     if (![msg.x, msg.y, msg.a].every(Number.isFinite)) return;
     const item = p.item;
     p.item = null;

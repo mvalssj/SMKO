@@ -598,7 +598,13 @@ export class Race {
         frame, zone: zone.now, next: zone.next, nav: royale.nav, rivals: near(k, c.id), boxes: royale.boxes, spawns: royale.spawns,
         item: rolling ? null : c.item ?? null,
       });
+      const falling = k.fall > 0;
       const ev = stepKart(k, input, o.track, this.geo, bumpNear(k, c.id), frame);
+      // For the server's statistics: where the bots fall off.
+      if (!falling && k.fall > 0) {
+        const name = regionAt(royale.world.world, k.x, k.y).info.name;
+        this.botFalls.set(name, (this.botFalls.get(name) ?? 0) + 1);
+      }
       if (ev.broken.length) {
         o.renderer.updateTiles(o.track, ev.broken);
         royale.nav.refresh(ev.broken);
@@ -655,6 +661,14 @@ export class Race {
     this.remote.forget(bot);
     if (!o.drivers.has(player.character)) this.onNewDriver?.(player.character);
   }
+  /** Battle Royale bots' falls per course since the last takeBotFalls(). */
+  private botFalls = new Map<string, number>();
+  takeBotFalls(): [string, number][] {
+    const out = [...this.botFalls];
+    this.botFalls.clear();
+    return out;
+  }
+
   /** Called when a driver not loaded yet comes in (online Battle Royale): load its pictures. */
   onNewDriver: ((character: number) => void) | null = null;
 

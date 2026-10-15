@@ -12,7 +12,7 @@ export class RoyaleState {
   private order: { x: number; y: number; angle: number }[];
   private navPhase = -1;
 
-  constructor(readonly world: WorldTrack, readonly seed: number) {
+  constructor(readonly world: WorldTrack, readonly seed: number, readonly zoneScale = 1) {
     this.circles = zoneCircles(seed);
     this.nav = new NavField(world);
     this.boxes = itemBoxes(world);
@@ -43,7 +43,7 @@ export class RoyaleState {
    * a few milliseconds a frame (all at once the first time, before the start).
    */
   zone(ms: number): ZoneNow {
-    const z = zoneAt(this.circles, ms);
+    const z = zoneAt(this.circles, ms, this.zoneScale);
     if (z.phase !== this.navPhase) {
       const first = this.navPhase < 0;
       this.navPhase = z.phase;

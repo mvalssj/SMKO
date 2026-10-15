@@ -4,6 +4,7 @@
 
 import { decompress } from './decompress';
 import { ITEM_KINDS, type ItemOdds } from '../../shared/protocol';
+import { BATTLE_NAMES, GP_NAMES } from '../../shared/names';
 
 export const TRACK_COUNT = 24; // 20 GP + 4 battle
 export const GP_TRACK_COUNT = 20;
@@ -78,14 +79,7 @@ const OVERLAY_PATTERN_SIZES = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 // GP start position records are not stored in track order.
 const GP_START_REORDER = [14, 10, 7, 8, 15, 19, 16, 4, 17, 13, 6, 12, 11, 5, 18, 9, 2, 3, 1, 0];
 
-// Names in cup order (the ROM stores them in a custom text encoding; not worth decoding for this).
-const GP_NAMES = [
-  'Mario Circuit 1', 'Donut Plains 1', 'Ghost Valley 1', 'Bowser Castle 1', 'Mario Circuit 2',
-  'Choco Island 1', 'Ghost Valley 2', 'Donut Plains 2', 'Bowser Castle 2', 'Mario Circuit 3',
-  'Koopa Beach 1', 'Choco Island 2', 'Vanilla Lake 1', 'Bowser Castle 3', 'Mario Circuit 4',
-  'Donut Plains 3', 'Koopa Beach 2', 'Ghost Valley 3', 'Vanilla Lake 2', 'Rainbow Road',
-];
-const BATTLE_NAMES = ['Battle Course 1', 'Battle Course 2', 'Battle Course 3', 'Battle Course 4'];
+// Course names are in shared/names.ts (the ROM stores them in a custom text encoding; not worth decoding).
 export const CUP_NAMES = ['Mushroom Cup', 'Flower Cup', 'Star Cup', 'Special Cup'];
 
 /** Road tile genres (terrain types), as stored in the ROM. */

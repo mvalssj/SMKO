@@ -519,8 +519,12 @@ async function royaleConnect(character: number, odds: ReturnType<SmkRom['itemOdd
   const timeout = <T>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<never>((_, no) => setTimeout(() => no(new Error('timeout')), ms))]);
   try {
     await timeout(client.opened, 3000);
-    const started = new Promise<Extract<ServerMsg, { t: 'royaleStart' }>>((resolve) => {
-      const off = client.on((m) => { if (m.t === 'royaleStart') { off(); resolve(m); } });
+    const started = new Promise<Extract<ServerMsg, { t: 'royaleStart' }>>((resolve, reject) => {
+      const off = client.on((m) => {
+        if (m.t === 'royaleStart') { off(); resolve(m); }
+        // Turned off or full on this server: play alone, saying why.
+        else if (m.t === 'error') { off(); showToast(m.message, 6000); reject(new Error(m.message)); }
+      });
     });
     client.send({ t: 'royaleJoin', romCrc: rom!.crc, character, odds });
     const msg = await timeout(started, 4000);
@@ -536,7 +540,7 @@ async function royaleConnect(character: number, odds: ReturnType<SmkRom['itemOdd
 
 function runRoyaleOnline(world: WorldTrack, m: Extract<ServerMsg, { t: 'royaleStart' }>) {
   if (m.broken.length) applyBreak(world, m.broken);
-  const state = new RoyaleState(world, m.seed);
+  const state = new RoyaleState(world, m.seed, m.zoneScale ?? 1);
   const out = new Map(m.balloons);
   // This browser runs the bots if the server says so (the bots still in).
   const cpus = m.host === m.selfId
@@ -643,13 +647,35 @@ applyWide();
 
 // Gamepads and the touch pad (they send the keyboard's keys).
 let toastTimer = 0;
-setupControls((text) => {
+function showToast(text: string, ms = 2500) {
   const t = $('toast');
   t.textContent = text;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => { t.hidden = true; }, 2500);
-});
+  toastTimer = window.setTimeout(() => { t.hidden = true; }, ms);
+}
+setupControls((text) => showToast(text));
+// Messages from the server's administrator stay a while longer.
+NetClient.notice = (text) => showToast(text, 10_000);
+
+// For the server's statistics (online races only): frame rate, kind of device and controls, wide picture,
+// and the bots' falls (the browser running them). Nothing that tells who the player is.
+let frames = 0;
+const countFrame = () => { frames++; requestAnimationFrame(countFrame); };
+requestAnimationFrame(countFrame);
+let framesAt = performance.now();
+setInterval(() => {
+  const now = performance.now();
+  const fps = (frames * 1000) / (now - framesAt);
+  frames = 0;
+  framesAt = now;
+  if (!net || !race || document.hidden) return;
+  const falls = race.takeBotFalls();
+  net.send({
+    t: 'telemetry', fps: Math.round(fps * 10) / 10, mobile: document.body.classList.contains('touch') || matchMedia('(pointer: coarse)').matches,
+    gamepad: [...(navigator.getGamepads?.() ?? [])].some(Boolean), wide, falls: falls.length ? falls : undefined,
+  });
+}, 30_000);
 document.addEventListener('fullscreenchange', () => {
   $('btn-fullscreen').hidden = !!document.fullscreenElement;
 });

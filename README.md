@@ -34,6 +34,45 @@ npm start          # http://localhost:3077  (PORT=xxxx para mudar)
 Para jogar pela internet, publique em um VPS (Node 22+) atrás de HTTPS, ou exponha a porta local com um túnel
 (`cloudflared tunnel --url http://localhost:3077`). O cliente usa `wss://` automaticamente quando a página está em HTTPS.
 
+### Painel do administrador
+
+O servidor tem um painel em `/admin` (em desenvolvimento, `http://localhost:5173/admin`). Ele só funciona com uma
+senha definida:
+
+```bash
+SMKO_ADMIN_PASSWORD=uma-senha-forte npm start
+```
+
+| Variável | Para quê |
+| --- | --- |
+| `SMKO_ADMIN_PASSWORD` | Senha do painel. Sem ela o painel fica desligado. |
+| `SMKO_DATA_DIR` | Pasta das configurações, banimentos e estatísticas (padrão: `data/`, fora do Git). |
+| `SMKO_TRUST_PROXY=1` | Atrás de um proxy (nginx, Cloudflare, Render...): usa o IP do cabeçalho `X-Forwarded-For`. |
+
+O que ele mostra e permite:
+
+- **Geral**: jogadores online, picos do dia e da semana, salas por modo, quem está no menu, no lobby, correndo ou
+  assistindo; CPU, memória, mensagens e banda por segundo, tempo do ciclo de atualização e do event loop, com
+  gráficos dos últimos 5 minutos.
+- **Salas**: cada sala (modo, pista, cc, corrida do GP, pessoas, bots, espectadores) e cada partida de Battle Royale
+  (vivos, pessoas e bots, fase da zona, quem roda os bots com o FPS e o ping dele). Mapa ao vivo das posições,
+  encerrar, expulsar alguém, e assistir uma sala no jogo.
+- **Jogadores**: piloto, onde está, ping, tempo conectado, se roda os bots, FPS, aparelho (celular, controle, 16:9),
+  reconexões, mensagens atrasadas, avisos. O IP aparece mascarado (`189.45.x.x`) com um código que identifica o
+  endereço para banimentos sem revelá-lo.
+- **Moderação**: avisos do anti-trapaça (velocidade impossível, item usado sem ter, mensagens fora de hora ou sem
+  permissão), banimentos com motivo e prazo, e o registro de tudo o que o administrador fez. Com a expulsão
+  automática ligada, quem junta muitos avisos em 10 minutos é desconectado.
+- **Estatísticas** (SQLite em `data/stats.db`, pelo `node:sqlite` do Node 22.5+; em versões antigas, só em memória):
+  partidas por dia e por modo, duração média, pistas e pilotos mais escolhidos, vitórias de pessoas e de bots no
+  Battle Royale, onde a zona fecha, sobrevivência média, quedas dos bots por pista, aparelhos e FPS médio, pico de
+  jogadores por dia. Os navegadores mandam a cada 30 s só o FPS, o tipo de aparelho e controle e a tela larga.
+- **Configurações** (valem na hora, sem reiniciar): ligar e desligar modos, limites de salas, de pessoas por sala,
+  de partidas e de pessoas por Battle Royale, velocidade da zona, expulsão automática, e um aviso que aparece na
+  tela de todos os jogadores.
+
+O painel continua sem nenhum dado da ROM.
+
 ## Controles
 
 O controle (gamepad) segue as posições do SNES: o botão de baixo é o B, o da direita é o A, o da esquerda é o Y e o de cima é o X. No Xbox isso corresponde a A, B, X e Y; no PlayStation, a ✕, ○, □ e △. Basta conectar o controle e apertar um botão; aparece um aviso de "Controle conectado".
@@ -80,6 +119,7 @@ npx tsx tools/race-preview.ts "Super Mario Kart (USA).sfc" saida 0 3       # tel
 npx tsx tools/hud-preview.ts "Super Mario Kart (USA).sfc" saida            # HUD e Lakitu (largada, voltas, chegada...)
 npx tsx tools/royale-test.ts "Super Mario Kart (USA).sfc"                  # Battle Royale: mundo, zona e 99 bots
 npm start & npx tsx tools/royale-net-test.ts "Super Mario Kart (USA).sfc" # Battle Royale online: troca bot -> pessoa
+SMKO_ADMIN_PASSWORD=teste123 npm start & npx tsx tools/admin-test.ts "Super Mario Kart (USA).sfc" teste123  # painel
 ```
 
 Estado atual: bot-test 20/20, cpu-test 160/160 CPUs terminam, item-test 13/13, net-test passando, lobby-test 15/15.
