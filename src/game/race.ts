@@ -157,6 +157,9 @@ export class Race {
   private skyTheme = -1;
   private royalePlace = 0;
   private royaleWinner: number | null = null;
+  private royaleEndedAt = 0;
+  /** Battle Royale eliminations, including the locally observed survival time for the final board. */
+  private royaleOut = new Map<number, { place: number; timeMs: number }>();
   private outsideSince: number | null = null;
 
   constructor(private o: RaceOptions) {
@@ -293,6 +296,7 @@ export class Race {
         break;
       case 'royaleOut': {
         this.balloons.set(m.id, 0);
+        this.royaleOut.set(m.id, { place: m.place, timeMs: Math.max(0, Math.round(performance.now() - this.startAt)) });
         const c = this.cpus.find((x) => x.id === m.id);
         if (c) c.out = true;
         if (m.id === o.selfId && !this.out) { this.out = true; this.royalePlace = m.place; this.item = null; }
@@ -300,6 +304,7 @@ export class Race {
       }
       case 'royaleOver':
         this.royaleWinner = m.winner;
+        this.royaleEndedAt ||= performance.now();
         if (m.winner === o.selfId && !this.finishedAt) {
           // The last one in: Lakitu waves the flag, the finish music plays, as at the end of a race.
           this.finishedAt = performance.now();
@@ -721,6 +726,15 @@ export class Race {
   get royaleResult(): { place: number; winner: number | null } | null {
     if (!this.o.royale || (!this.out && this.royaleWinner === null)) return null;
     return { place: this.royalePlace || 1, winner: this.royaleWinner };
+  }
+
+  /** Final survival classification, winner first. Limited by the caller for the Top 10 board. */
+  royaleStandings(): { id: number; place: number; timeMs: number }[] {
+    if (!this.o.royale || this.royaleWinner === null) return [];
+    const finalMs = Math.max(0, Math.round(((this.royaleEndedAt || this.finishedAt || performance.now()) - this.startAt)));
+    const rows = [...this.royaleOut.entries()].map(([id, r]) => ({ id, ...r }));
+    if (!this.royaleOut.has(this.royaleWinner)) rows.push({ id: this.royaleWinner, place: 1, timeMs: finalMs });
+    return rows.sort((a, b) => a.place - b.place || b.timeMs - a.timeMs);
   }
 
   /** Sounds of our own kart, as the game raises them. */

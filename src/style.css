@@ -104,13 +104,23 @@ button.character:disabled { opacity: 0.35; }
 }
 #results button { pointer-events: auto; }
 
-/* Original menus: SNES picture at 8:7 pixel aspect, crisp pixels */
+/* Menus use the same wide stage as the race. The original 4:3 menu picture stays pixel-perfect in its centre,
+   rather than being stretched; the side space is the intentional widescreen matte. */
 .snes-frame {
-  width: min(100vw, 100vh * 2048 / 1568);
-  aspect-ratio: 2048 / 1568;
+  width: min(100vw, 100vh * (var(--ar)));
+  aspect-ratio: var(--ar);
   background: #000;
+  display: grid;
+  place-items: center;
 }
-#menu-canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+#menu-canvas {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: 100%;
+  aspect-ratio: 2048 / 1568;
+  image-rendering: pixelated;
+}
 /* Small bar over the top-right corner: room code, controls. */
 #menu-bar {
   position: fixed; top: 8px; right: 8px; z-index: 2; max-width: min(420px, calc(100vw - 16px));

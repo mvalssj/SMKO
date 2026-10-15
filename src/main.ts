@@ -264,6 +264,28 @@ function resultsBoard(results: { id: number; timeMs: number | null }[], round: n
   };
 }
 
+/** Battle Royale end flow: Top 10 survivors, original-style podium, then a fresh driver choice. */
+function showRoyaleResults(order: { id: number; place: number; timeMs: number }[]) {
+  const top = order.slice(0, 10);
+  // The original RESULTS screen has room for eight lines. Keep its authentic layout and page 9–10.
+  const pages: Board[] = [];
+  for (let at = 0; at < top.length; at += 8) {
+    const page = top.slice(at, at + 8);
+    pages.push({
+      kind: 'results', cc: 100, cup: -1, round: at / 8 + 1,
+      rows: page.map((r) => ({ character: characterOf(r.id), timeMs: r.timeMs, place: r.place, self: r.id === selfOrSolo() })),
+    });
+  }
+  const podium = top.slice(0, 3).map((r) => characterOf(r.id));
+  playBoards(pages, 'Enter: próximo ranking', () => showCeremony(podium, characterOf(selfOrSolo()), () => {
+    royaleOn = false;
+    net?.close();
+    net = null;
+    endRace();
+    menu?.toRoyaleSelect();
+  }));
+}
+
 /** Standings: first with the points just won (+n) in the old order, then sorted. */
 function standingsBoards(ids: number[], before: Map<number, number>, after: Map<number, number>, round: number): Board[] {
   const rank = (m: Map<number, number>) => [...ids].sort((a, b) => (m.get(b) ?? 0) - (m.get(a) ?? 0));
@@ -511,16 +533,17 @@ async function startRoyale(character: number) {
   await hold(Math.max(0, FADES.toRace.black - (performance.now() - t0) / (1000 / 60)));
   if (online) runRoyaleOnline(world, online);
   else runRoyaleSolo(world, character);
-  // Over: the winner's flag (or our place) for a while, then back to the title.
+  // Let Lakitu show the winner/place briefly, then present the full survival classification.
+  let ending = false;
   const check = () => {
-    if (!race || !royaleOn) return;
+    if (!race || !royaleOn || ending) return;
     const r = race.royaleResult;
     if (!r || r.winner === null) { setTimeout(check, 250); return; }
-    status('results-hint', r.place === 1 ? 'VOCÊ VENCEU! Pressione Enter' : `Você ficou em ${r.place}º. Pressione Enter`);
+    ending = true;
+    status('results-hint', r.place === 1 ? 'VOCÊ VENCEU!' : `Você ficou em ${r.place}º.`);
     setTimeout(() => {
       if (!race || !royaleOn) return;
-      $('results').hidden = false;
-      onContinue = () => leaveRoyale();
+      showRoyaleResults(race.royaleStandings());
     }, 4000);
   };
   check();
@@ -562,6 +585,7 @@ function runRoyaleOnline(world: WorldTrack, m: Extract<ServerMsg, { t: 'royaleSt
   gp = null;
   royaleOn = true;
   lastTrack = null;
+  lastCc = 100;
   startRace({
     track: world, royale: state, cc: 100, players: m.players, items: true, battle: true, selfId: m.selfId,
     slot: Math.max(0, m.players.findIndex((p) => p.id === m.selfId)), cpus, startInMs: m.startInMs, online: true,
@@ -585,6 +609,7 @@ function runRoyaleSolo(world: WorldTrack, character: number) {
   gp = null;
   royaleOn = true;
   lastTrack = null;
+  lastCc = 100;
   startRace({
     track: world, royale: state, cc: 100, players: [me, ...bots], items: true, battle: true, selfId: 1, slot: slots[0],
     cpus: bots.map((b, i) => ({ id: b.id, slot: slots[i + 1], skill: 0.6 + Math.random() * 0.4 })),

@@ -122,6 +122,15 @@ export class MenuApp {
     this.state = { s: 'title' };
   }
 
+  /** After a solo Battle Royale: return directly to a fresh driver selection. */
+  toRoyaleSelect() {
+    this.online = false;
+    this.lobby = null;
+    this.mode = 'royale';
+    this.cc = 100;
+    this.state = { s: 'select', tv: TV_CHARACTERS.indexOf(this.character), ok: false, online: false };
+  }
+
   /** After a solo race/GP: straight back to the cup screen with the same settings. */
   toCupSelect() {
     this.state = { s: 'cup', cursor: 0, online: this.online };
