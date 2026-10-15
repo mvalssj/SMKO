@@ -1,8 +1,9 @@
 // Battle Royale world: every course of the game (the 20 GP tracks and the 4 battle courses) on one open map,
-// a cup per row with its battle course at the end, joined by Mario Circuit roads (grass, red-and-white kerbs,
-// striped asphalt: tile patterns copied from Mario Circuit 1 and 2). Each course keeps its own tiles, terrain
-// and objects; a road is cut from the edge of the course map straight in to its track (through the fences,
-// the void, the water...), so the borders are open where the roads come in.
+// a cup per row with its battle course at the end, laid like tiles with Mario Circuit roads as the grout
+// (red-and-white kerbs, striped asphalt: tile patterns copied from Mario Circuit 1 and 2) between them and
+// round them. Each course keeps its own tiles, terrain and objects; from every side a road is cut from the
+// edge of the course map straight in to its track (through the fences, the void, the water...), so the
+// borders are open where the roads come in.
 //
 // The floor is kept as tile numbers into an atlas of all eight themes' road tiles (8 x 256 tiles of 8x8), the
 // way the SNES builds its Mode 7 picture, so the world never needs one huge picture.
@@ -184,32 +185,64 @@ export function buildWorld(rom: SmkRom): WorldTrack {
       default: return [reg.x0 + along, reg.y0 + COURSE - 1 - d];
     }
   };
-  const at = (c: number, r: number) => regions[r * GRID_COLS + c];
+  // The roads are the grout between the courses' tiles: every gap between two course maps, and the strip
+  // round the world inside the fence, is one Mario Circuit road (kerbs along the courses, striped asphalt),
+  // the roads crossing on plain asphalt.
+  /** Road bands across the world (first and last tile, kerbs included), the same down and across. */
+  const bands = (courses: number) => {
+    const out: [number, number][] = [[1, MARGIN - 1]];
+    for (let k = 0; k < courses; k++) {
+      const after = MARGIN + k * (COURSE + GAP) + COURSE;
+      out.push(k + 1 < courses ? [after, after + GAP - 1] : [after, after + MARGIN - 2]);
+    }
+    return out;
+  };
+  const across = bands(GRID_ROWS), down = bands(GRID_COLS);
+  const inBand = (b: [number, number][], v: number) => b.some(([a, z]) => v >= a && v <= z);
+  for (const [y0, y1] of across) {
+    for (let x = 1; x < WORLD_COLS - 1; x++) {
+      const p = MC.horizontal[phase(x)];
+      for (let y = y0; y <= y1; y++) put(x, y, base, y === y0 ? p[0] : y === y1 ? p[2] : p[1]);
+    }
+  }
+  for (const [x0, x1] of down) {
+    for (let y = 1; y < WORLD_ROWS - 1; y++) {
+      if (inBand(across, y)) continue; // the crossing stays asphalt
+      const p = MC.vertical[phase(y)];
+      for (let x = x0; x <= x1; x++) put(x, y, base, x === x0 ? p[0] : x === x1 ? p[2] : p[1]);
+    }
+  }
+  // Where the roads cross: asphalt only, the kerbs of the road across left out.
+  for (const [y0, y1] of across) {
+    for (const [x0, x1] of down) {
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) put(x, y, base, MC.horizontal[phase(x)][1]);
+    }
+  }
 
-  // Roads between neighbours: straight across the grass, cut into both courses at the best common line.
-  for (let r = 0; r < GRID_ROWS; r++) {
-    for (let c = 0; c < GRID_COLS; c++) {
-      const a = at(c, r);
-      if (!a) continue;
-      for (const [b, horizontal] of [[c + 1 < GRID_COLS ? at(c + 1, r) : undefined, true], [r + 1 < GRID_ROWS ? at(c, r + 1) : undefined, false]] as const) {
-        if (!b) continue;
-        let best = -1, bestCost = Infinity;
-        for (let line = 16; line <= COURSE - 16 - ROAD_W; line++) {
-          const cost = horizontal ? reach(a, 'right', line) + reach(b, 'left', line) : reach(a, 'bottom', line) + reach(b, 'top', line);
-          // Ties: nearest the middle of the side.
-          const score = cost + Math.abs(line + ROAD_W / 2 - COURSE / 2) * 0.05;
-          if (score < bestCost) { bestCost = score; best = line; }
-        }
-        if (best < 0 || !Number.isFinite(bestCost)) continue;
-        if (horizontal) {
-          const y = a.y0 + best;
-          const from = a.x0 + COURSE - reach(a, 'right', best), to = b.x0 + reach(b, 'left', best);
-          for (let x = from; x < to; x++) horizontalRoad(x, y);
-        } else {
-          const x = a.x0 + best;
-          const from = a.y0 + COURSE - reach(a, 'bottom', best), to = b.y0 + reach(b, 'top', best);
-          for (let y = from; y < to; y++) verticalRoad(x, y);
-        }
+  // Into each course from every side: a road cut from the grout straight in to its track (through the fences,
+  // the void, the water...), at the line where that is shortest, the kerb of the road outside opened up.
+  const sides = ['left', 'right', 'top', 'bottom'] as const;
+  for (const reg of regions) {
+    for (const side of sides) {
+      let best = -1, bestCost = Infinity;
+      for (let line = 16; line <= COURSE - 16 - ROAD_W; line++) {
+        // Ties: nearest the middle of the side.
+        const score = reach(reg, side, line) + Math.abs(line + ROAD_W / 2 - COURSE / 2) * 0.05;
+        if (score < bestCost) { bestCost = score; best = line; }
+      }
+      if (best < 0 || !Number.isFinite(bestCost)) continue;
+      const d = reach(reg, side, best);
+      const horizontal = side === 'left' || side === 'right';
+      for (let k = -1; k < d; k++) {
+        const [x, y] = sidePoint(reg, side, k, best);
+        if (k < 0) {
+          // The kerb of the road outside, opened where this road comes in.
+          for (let a = 1; a <= ASPHALT; a++) {
+            const [ox, oy] = sidePoint(reg, side, k, best + a);
+            put(ox, oy, base, horizontal ? MC.horizontal[phase(ox)][1] : MC.vertical[phase(oy)][1]);
+          }
+        } else if (horizontal) horizontalRoad(x, y);
+        else verticalRoad(x, y);
       }
     }
   }

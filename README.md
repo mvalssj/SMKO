@@ -91,8 +91,8 @@ plataformas.
 No menu principal: **BATTLE ROYALE**. São 100 pilotos num mundo aberto que junta todas as pistas do jogo: as 20 do GP e as 4 de batalha. Vence o último que ainda tiver balões.
 
 - **O mundo:** é uma grade de 6 × 4 pistas, com cada copa numa linha e a pista de batalha no fim.
-  - Entre as pistas há estradas no estilo do Mario Circuit: asfalto listrado e bordas copiados das retas do Mario Circuit 1 e 2, sobre a areia do Mario Circuit.
-  - Cada estrada abre a cerca e entra até a pista, atravessando o que houver no caminho: canos, vazio, água, lava.
+  - As pistas ficam como azulejos e as estradas são o rejunte: todo o espaço entre elas, e a volta do mundo, é uma estrada no estilo do Mario Circuit (asfalto listrado e bordas copiados das retas do Mario Circuit 1 e 2), com cruzamentos de asfalto.
+  - De cada lado de cada pista sai uma entrada que abre a cerca e vai até o traçado, atravessando o que houver no caminho: canos, vazio, água, lava.
   - O verde de fora das cercas, que na pista original é "fora dos limites", vira grama transitável.
   - Cada pista mantém seus blocos, terreno, objetos (canos, Thwomps, toupeiras, plantas, peixes), caixas de item e moedas.
   - O céu do horizonte e a música mudam conforme a pista em que você está.
