@@ -89,8 +89,15 @@ button.character:disabled { opacity: 0.35; }
   image-rendering: pixelated;
 }
 #viewport canvas#place-fx { mix-blend-mode: plus-lighter; pointer-events: none; }
-/* The original board/podium picture stays fully visible and pixel-correct inside the wide stage. */
-#viewport canvas#board { z-index: 1; left: var(--pad); right: var(--pad); width: auto; }
+/* Boards and podium share this canvas. Give their native 4:3 image a literal 50% anchor in the 16:9 stage,
+   rather than relying on paired insets, so it remains centred at every viewport size. */
+#viewport canvas#board {
+  z-index: 1;
+  left: 50%;
+  right: auto;
+  width: calc(100% - var(--pad) - var(--pad));
+  transform: translateX(-50%);
+}
 /* Spectator line (everything else of the HUD is drawn in the picture). */
 #hud-note {
   position: absolute; left: 0; right: 0; bottom: 2%; text-align: center; pointer-events: none;
