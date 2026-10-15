@@ -28,6 +28,9 @@ let renderer: Renderer | null = null;
 let race: Race | null = null;
 let solo: LocalChannel | null = null;
 let net: NetClient | null = null;
+/** The 24-course Battle Royale world is expensive to assemble. Build it once while the title/menu is idle. */
+let royaleWorld: WorldTrack | null = null;
+let royaleWorldWarmup = 0;
 let selfId = 0;
 let room: Extract<ServerMsg, { t: 'room' }> | null = null;
 
@@ -81,6 +84,8 @@ function status(id: string, text: string, error = false) {
 async function loadRom(bytes: Uint8Array, remember: boolean) {
   try {
     rom = new SmkRom(bytes);
+    royaleWorld = null;
+    if (royaleWorldWarmup) { clearTimeout(royaleWorldWarmup); royaleWorldWarmup = 0; }
     if (rom.region !== 'US') throw new Error('Use a ROM americana (USA): as telas e os sprites originais foram mapeados nela.');
     menu = new MenuApp(rom, $('menu-canvas') as HTMLCanvasElement, {
       solo: startSolo,
@@ -110,6 +115,12 @@ async function loadRom(bytes: Uint8Array, remember: boolean) {
   show('menu');
   black();
   void fadeIn(FADES.titleIn);
+  // Assemble the giant world before the player picks Battle Royale, not on the transition into it.
+  const thisRom = rom;
+  royaleWorldWarmup = window.setTimeout(() => {
+    royaleWorldWarmup = 0;
+    if (rom === thisRom && !royaleWorld) royaleWorld = buildWorld(thisRom);
+  }, 1200);
   // Invite link (?sala=CODE): straight into that room (its lobby, or watching the race in progress).
   const invited = roomFromUrl();
   if (invited) void connect(invited);
@@ -493,7 +504,8 @@ let royaleOn = false;
 async function startRoyale(character: number) {
   await fadeOut(FADES.toRace.out);
   const t0 = performance.now();
-  const world = buildWorld(rom!);
+  // Usually already assembled while the player was in the menus; keep the synchronous fallback for a fast selection.
+  const world = royaleWorld ?? (royaleWorld = buildWorld(rom!));
   const battleCourse = rom!.tracks.find((t) => t.battle)!;
   const online = await royaleConnect(character, rom!.itemOdds(battleCourse)).catch(() => null);
   await hold(Math.max(0, FADES.toRace.black - (performance.now() - t0) / (1000 / 60)));
