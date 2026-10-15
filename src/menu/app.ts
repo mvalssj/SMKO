@@ -75,7 +75,6 @@ export class MenuApp {
   private online = false;
   private lobby: LobbyView | null = null;
   private pressed = new Set<string>();
-  private padPrev = new Set<string>();
   private titleDrivers: SpriteFrame[][][];
   private selectDrivers: SpriteFrame[][][];
   private onKey = (e: KeyboardEvent) => this.key(e);
@@ -102,7 +101,6 @@ export class MenuApp {
     addEventListener('keydown', this.onKey);
     const loop = () => {
       this.raf = requestAnimationFrame(loop);
-      this.pollPad();
       this.frame++;
       this.draw();
     };
@@ -167,23 +165,6 @@ export class MenuApp {
     if (!k) return;
     e.preventDefault();
     this.press(k);
-  }
-
-  private pollPad() {
-    const now = new Set<string>();
-    for (const pad of navigator.getGamepads?.() ?? []) {
-      if (!pad) continue;
-      const b = (i: number) => pad.buttons[i]?.pressed;
-      if (b(12) || pad.axes[1] < -0.5) now.add('up');
-      if (b(13) || pad.axes[1] > 0.5) now.add('down');
-      if (b(14) || pad.axes[0] < -0.5) now.add('left');
-      if (b(15) || pad.axes[0] > 0.5) now.add('right');
-      if (b(0)) now.add('b');
-      if (b(1)) now.add('y');
-      if (b(9)) now.add('start');
-    }
-    for (const k of now) if (!this.padPrev.has(k)) this.press(k);
-    this.padPrev = now;
   }
 
   /** A fade between screens is running: keys wait (as in the original). */

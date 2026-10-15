@@ -36,15 +36,21 @@ Para jogar pela internet, publique em um VPS (Node 22+) atrás de HTTPS, ou expo
 
 ## Controles
 
-| Ação | Teclado | Controle |
-|---|---|---|
-| Acelerar | ↑ / W / X / Espaço | A / RT |
-| Frear / ré | ↓ / S / Z | B / X / LT |
-| Virar | ← → / A D | analógico / direcional |
-| Derrapar | Shift / C | LB / RB |
-| Usar item | E / Q / Ctrl (segure freio para jogar o casco para trás) | X / Y |
-| Menus: confirmar / voltar | X, Espaço ou Enter / Z, Esc | A / B |
-| Sair do treino | Esc | |
+O controle (gamepad) segue as posições do SNES: o botão de baixo é o B, o da direita é o A, o da esquerda é o Y e o de cima é o X. No Xbox isso corresponde a A, B, X e Y; no PlayStation, a ✕, ○, □ e △. Basta conectar o controle e apertar um botão; aparece um aviso de "Controle conectado".
+
+| Ação | Teclado | Controle | Tela de toque |
+|---|---|---|---|
+| Acelerar | ↑ / W / X / Espaço | B (baixo) / RT | B |
+| Frear / ré | ↓ / S / Z | Y (esquerda) / LT | Y |
+| Virar | ← → / A D | analógico / direcional | direcional |
+| Derrapar / pular | Shift / C | L / R | L / R |
+| Usar item | E / Q / Ctrl (segure freio para jogar o casco para trás) | A / X | A / X |
+| Menus: confirmar / voltar | X, Espaço ou Enter / Z, Esc | B ou Start / Y | B ou START / Y |
+| Sair do treino | Esc | | |
+
+**Celular e tablet:** em telas de toque aparece um controle do SNES na tela. Dá para deslizar o dedo de um botão para outro, como do B para o A. Em pé (retrato), o jogo fica em cima e os botões embaixo. Deitado (paisagem), os botões ficam semitransparentes sobre os cantos. O botão "tela cheia" também tenta virar a tela para paisagem.
+
+**Tela larga (16:9):** o botão "▭ 16:9" no canto aumenta a imagem da corrida de 256 para 348 colunas, mantendo os pixels 8:7 do SNES. A imagem não é esticada: aparece mais pista dos lados, e o HUD e o mapa continuam nas posições originais. Os menus e os quadros de resultado continuam em 4:3. A escolha fica salva no navegador.
 
 ## Estrutura
 

@@ -2,7 +2,10 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#000000" />
   <title>SMKO</title>
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="/src/style.css" />
@@ -29,7 +32,8 @@
           <summary>Controles</summary>
           <p>Menus: setas movem · X / Espaço / Enter confirma · Z / Esc volta · no código da sala, digite as letras.<br />
           Corrida: ↑ / W / X / Espaço acelera · ↓ / S / Z freia · ← → vira · Shift derrapa · E / Q / Ctrl usa o item
-          (segure freio para jogar o casco para trás). M liga/desliga o som. Controle (gamepad) também funciona.</p>
+          (segure freio para jogar o casco para trás). M liga/desliga o som.<br />
+          Controle (gamepad): como o do SNES — B (botão de baixo) acelera/confirma, Y (esquerda) freia/volta, A/X usam o item, L/R derrapam, Start. No celular aparecem botões na tela.</p>
         </details>
       </div>
     </section>
@@ -53,7 +57,28 @@
   </main>
   <!-- Fades between screens (the SNES master brightness). -->
   <div id="fade"></div>
-  <button id="btn-fullscreen" class="fullscreen-btn" title="Tela cheia (F11)">⛶ tela cheia</button>
+  <!-- On-screen SNES pad for phones and tablets (sends the same keys as the keyboard). -->
+  <div id="touch" aria-hidden="true">
+    <div class="tside left">
+      <div data-btn="L" class="shoulder">L</div>
+      <div class="dpad"><span class="arm up"></span><span class="arm down"></span><span class="arm left"></span><span class="arm right"></span></div>
+    </div>
+    <div data-btn="START" class="start">START</div>
+    <div class="tside right">
+      <div data-btn="R" class="shoulder">R</div>
+      <div class="face">
+        <div data-btn="X" class="x">X</div>
+        <div data-btn="Y" class="y">Y</div>
+        <div data-btn="A" class="a">A</div>
+        <div data-btn="B" class="b">B</div>
+      </div>
+    </div>
+  </div>
+  <div id="toast" hidden></div>
+  <div class="corner-btns">
+    <button id="btn-wide" class="fullscreen-btn" title="Tela larga 16:9 sem distorcer">▭ 16:9</button>
+    <button id="btn-fullscreen" class="fullscreen-btn" title="Tela cheia (F11)">⛶ tela cheia</button>
+  </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

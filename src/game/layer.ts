@@ -9,7 +9,12 @@ export const H = 224;
 type Rgb = readonly [number, number, number];
 
 export class Layer {
-  readonly px = new Uint8ClampedArray(W * H * 4);
+  px: Uint8ClampedArray;
+  /**
+   * Horizontal offset added to everything drawn: widescreen pictures are wider than 256, and the HUD keeps
+   * the original's positions in the middle 256 columns.
+   */
+  ox = 0;
   /** Optional clip rectangle (rows), e.g. the race view or the map. */
   private clip = { y0: 0, y1: H };
 
@@ -18,7 +23,18 @@ export class Layer {
     private hud: Uint8Array,
     /** The track's 256 colors; sprite palette p is colors[(8 + p) * 16 + i]. */
     public colors: Rgb[],
-  ) {}
+    /** Picture width (256 = the original; wider for widescreen, never stretched). */
+    public w = W,
+  ) {
+    this.px = new Uint8ClampedArray(w * H * 4);
+  }
+
+  /** Changes the picture width (widescreen on/off). */
+  resize(w: number) {
+    if (w === this.w) return;
+    this.w = w;
+    this.px = new Uint8ClampedArray(w * H * 4);
+  }
 
   clear() {
     this.px.fill(0);
@@ -29,8 +45,9 @@ export class Layer {
   }
 
   private put(x: number, y: number, c: Rgb, alpha = 1) {
-    if (x < 0 || x >= W || y < this.clip.y0 || y >= this.clip.y1) return;
-    const p = (y * W + x) * 4;
+    x += this.ox;
+    if (x < 0 || x >= this.w || y < this.clip.y0 || y >= this.clip.y1) return;
+    const p = (y * this.w + x) * 4;
     if (alpha >= 1) {
       this.px[p] = c[0]; this.px[p + 1] = c[1]; this.px[p + 2] = c[2]; this.px[p + 3] = 255;
     } else {

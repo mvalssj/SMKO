@@ -94,7 +94,8 @@ attribute vec2 aPos;
 void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 `;
 
-const FRAG = `
+/** Fragment shader for a picture `w` pixels wide (the view widens, the scale stays the original's). */
+const frag = (w: number) => `
 precision highp float;
 uniform sampler2D uMap;
 uniform sampler2D uFill;
@@ -121,8 +122,8 @@ void main() {
     float by = sy - (${HORIZON}.0 - ${BG_HEIGHT}.0);
     if (by >= 0.0) {
       float v = (by + 0.5) / ${BG_HEIGHT}.0;
-      vec4 back = texture2D(uBgBack, vec2(fract((sx + uBgScroll.y + 0.5) / ${BG_BACK_W}.0), v));
-      vec4 front = texture2D(uBgFront, vec2(fract((sx + uBgScroll.x + 0.5) / ${BG_FRONT_W}.0), v));
+      vec4 back = texture2D(uBgBack, vec2(fract((sx - ${(w - SCREEN_W) >> 1}.0 + uBgScroll.y + 0.5) / ${BG_BACK_W}.0), v));
+      vec4 front = texture2D(uBgFront, vec2(fract((sx - ${(w - SCREEN_W) >> 1}.0 + uBgScroll.x + 0.5) / ${BG_FRONT_W}.0), v));
       c = mix(c, back.rgb, back.a);
       c = mix(c, front.rgb, front.a);
     }
@@ -130,7 +131,7 @@ void main() {
     // Race view (Mode 7): one floor line per screen line.
     float dy = sy - ${HORIZON}.0 + 1.0;
     float z = ${CAM_HEIGHT}.0 * uFocal / dy;
-    float lateral = (sx + 0.5 - ${SCREEN_W / 2}.0) * z / uFocal;
+    float lateral = (sx + 0.5 - ${w / 2}.0) * z / uFocal;
     vec2 fwd = vec2(sin(uAngle), -cos(uAngle));
     vec2 right = vec2(cos(uAngle), sin(uAngle));
     c = floorAt(uCam + fwd * z + right * lateral);
@@ -139,7 +140,7 @@ void main() {
     float t = (sy - ${MAP_TOP}.0 + 0.5) / ${MAP_BOTTOM - MAP_TOP}.0;
     float wy = ${MAP_PX}.0 * t * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
     float scale = ${MAP_SCALE} * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
-    c = floorAt(vec2(${MAP_PX / 2}.0 + (sx + 0.5 - ${SCREEN_W / 2}.0) * scale, wy));
+    c = floorAt(vec2(${MAP_PX / 2}.0 + (sx + 0.5 - ${w / 2}.0) * scale, wy));
   }
   gl_FragColor = vec4(c, 1.0);
 }
@@ -176,34 +177,53 @@ export class Renderer {
   layer: Layer | null = null;
   hud: RaceHud | null = null;
 
-  constructor(floorCanvas: HTMLCanvasElement, overlayCanvas: HTMLCanvasElement, private gfx: RaceGfx | null, placeCanvas?: HTMLCanvasElement) {
-    floorCanvas.width = overlayCanvas.width = SCREEN_W;
-    floorCanvas.height = overlayCanvas.height = SCREEN_H;
-    if (placeCanvas) { placeCanvas.width = SCREEN_W; placeCanvas.height = SCREEN_H; }
-    this.placeFx = placeCanvas?.getContext('2d') ?? null;
-    this.placeImage = new ImageData(SCREEN_W, SCREEN_H);
+  /** Picture width: 256, or wider for widescreen (more of the course at the sides, same pixel scale). */
+  width = SCREEN_W;
+  /** Where the original 256 columns start (the HUD is drawn there). */
+  pad = 0;
 
+  constructor(private floorCanvas: HTMLCanvasElement, private overlayCanvas: HTMLCanvasElement, private gfx: RaceGfx | null, private placeCanvas?: HTMLCanvasElement, width = SCREEN_W) {
+    this.placeFx = placeCanvas?.getContext('2d') ?? null;
     const gl = floorCanvas.getContext('webgl', { antialias: false });
     if (!gl) throw new Error('WebGL não está disponível neste navegador.');
     this.gl = gl;
     this.overlay = overlayCanvas.getContext('2d')!;
-    this.image = this.overlay.createImageData(SCREEN_W, SCREEN_H);
-
-    this.prog = link(gl, VERT, FRAG);
-    gl.useProgram(this.prog);
-    for (const name of UNIFORMS) this.uniforms[name] = gl.getUniformLocation(this.prog, name);
-
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(this.prog, 'aPos');
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    this.prog = null!;
+    this.image = this.placeImage = null!;
+    this.setWidth(width, true);
 
     this.mapTex = gl.createTexture()!;
     this.fillTex = gl.createTexture()!;
     this.bgFrontTex = gl.createTexture()!;
     this.bgBackTex = gl.createTexture()!;
+  }
+
+  /**
+   * Picture width: 256 (the original) or wider (widescreen: more of the course at the sides, same scale; the
+   * HUD stays in the middle 256 columns). Can change during a race.
+   */
+  setWidth(width: number, force = false) {
+    if (width === this.width && !force) return;
+    this.width = width;
+    this.pad = (width - SCREEN_W) >> 1;
+    this.floorCanvas.width = this.overlayCanvas.width = width;
+    this.floorCanvas.height = this.overlayCanvas.height = SCREEN_H;
+    if (this.placeCanvas) { this.placeCanvas.width = width; this.placeCanvas.height = SCREEN_H; }
+    this.placeImage = new ImageData(width, SCREEN_H);
+    this.image = this.overlay.createImageData(width, SCREEN_H);
+    this.layer?.resize(width);
+
+    const gl = this.gl;
+    if (this.prog) gl.deleteProgram(this.prog);
+    this.prog = link(gl, VERT, frag(width));
+    gl.useProgram(this.prog);
+    for (const name of UNIFORMS) this.uniforms[name] = gl.getUniformLocation(this.prog, name);
+    const loc = gl.getAttribLocation(this.prog, 'aPos');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
   }
 
   /** Loads a track and the driver frames (already colored with its palettes) for the characters in the race. */
@@ -224,7 +244,7 @@ export class Renderer {
     }
     // Sprites and HUD use the track's palettes, as on the SNES.
     if (this.gfx) {
-      this.layer = new Layer(this.gfx.obj, this.gfx.hud, track.colors);
+      this.layer = new Layer(this.gfx.obj, this.gfx.hud, track.colors, this.width);
       this.hud = new RaceHud(this.layer, this.gfx);
     }
   }
@@ -248,7 +268,7 @@ export class Renderer {
   render(cam: Camera, sprites: Sprite[], objects: ObjectSprite[], markers: MapMarker[], hud: (hud: RaceHud) => void) {
     const gl = this.gl;
     const u = this.uniforms;
-    gl.viewport(0, 0, SCREEN_W, SCREEN_H);
+    gl.viewport(0, 0, this.width, SCREEN_H);
     gl.useProgram(this.prog);
     const textures = [this.mapTex, this.fillTex, this.bgFrontTex, this.bgBackTex];
     ['uMap', 'uFill', 'uBgFront', 'uBgBack'].forEach((name, i) => {
@@ -269,9 +289,12 @@ export class Renderer {
     if (!layer) return;
     this.tick++;
     layer.clear();
+    layer.ox = 0;
     layer.setClip(HORIZON, VIEW_BOTTOM);
     drawRaceView(layer, cam, sprites, objects, { drivers: this.drivers, objectFrames: this.objectFrames, objectSizes: this.objectSizes, itemFrames: this.itemFrames }, this.tick);
     layer.setClip(MAP_TOP, MAP_BOTTOM);
+    // The course map is centred in the picture, the HUD in the original's 256 columns.
+    layer.ox = this.pad;
     for (const m of markers) {
       const p = mapPoint(m.x, m.y);
       if (p) this.hud!.head(m.character, p.x, p.y, m.palette);
@@ -285,7 +308,7 @@ export class Renderer {
       this.placeImage.data.fill(0);
       const p = this.hud!.placeShow as PlaceShow | null;
       if (p) placeMask(this.gfx.place, p.n, (x, y) => {
-        const q = (y * SCREEN_W + x) * 4;
+        const q = (y * this.width + x + this.pad) * 4;
         this.placeImage.data.set([p.add[0], p.add[1], p.add[2], 255], q);
       });
       this.placeFx.putImageData(this.placeImage, 0, 0);
@@ -319,7 +342,7 @@ export function drawRaceView(layer: Layer, cam: Camera, sprites: Sprite[], objec
 
   for (const item of projected) {
     const k = FOCAL / item.z; // screen px per world px
-    const sx = SCREEN_W / 2 + item.lat * k;
+    const sx = layer.w / 2 + item.lat * k;
     const ground = HORIZON + (CAM_HEIGHT * FOCAL) / item.z;
     if ('object' in item) {
       const o = item.s;

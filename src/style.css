@@ -74,10 +74,14 @@ button.character:disabled { opacity: 0.35; }
   position: fixed; inset: 0; z-index: 1; background: #000;
   display: grid; place-items: center; overflow: hidden;
 }
+/* --ar: the race picture's shape. 256x224 with the SNES's 8:7 pixels, or 348x224 in widescreen (16:9, the
+   pixels keep their shape: the extra columns show more of the course). */
+:root { --ar: 2048 / 1568; --pad: 0%; }
+:root.wide { --ar: 2784 / 1568; --pad: 13.218%; }
 #viewport {
   position: relative;
-  width: min(100vw, 100vh * 2048 / 1568);
-  aspect-ratio: 2048 / 1568;
+  width: min(100vw, 100vh * (var(--ar)));
+  aspect-ratio: var(--ar);
   background: #000;
 }
 #viewport canvas#floor, #viewport canvas#overlay, #viewport canvas#place-fx, #viewport canvas#board {
@@ -85,7 +89,8 @@ button.character:disabled { opacity: 0.35; }
   image-rendering: pixelated;
 }
 #viewport canvas#place-fx { mix-blend-mode: plus-lighter; pointer-events: none; }
-#viewport canvas#board { z-index: 1; }
+/* The boards are 256 wide: pillarboxed in widescreen. */
+#viewport canvas#board { z-index: 1; left: var(--pad); right: var(--pad); width: auto; }
 /* Spectator line (everything else of the HUD is drawn in the picture). */
 #hud-note {
   position: absolute; left: 0; right: 0; bottom: 2%; text-align: center; pointer-events: none;
@@ -114,11 +119,66 @@ button.character:disabled { opacity: 0.35; }
 }
 #menu-bar .help summary { cursor: pointer; }
 #menu-bar .help p { margin: 6px 0 0; }
+.corner-btns { position: fixed; bottom: 8px; right: 8px; z-index: 2; display: flex; gap: 6px; }
 .fullscreen-btn {
-  position: fixed; bottom: 8px; right: 8px; z-index: 2; font-size: 12px; padding: 4px 8px;
+  font-size: 12px; padding: 4px 8px;
   background: rgba(18, 19, 26, 0.7); color: var(--text); border: 1px solid #555; border-radius: 6px; cursor: pointer; opacity: 0.5;
 }
 .fullscreen-btn:hover { opacity: 1; }
+
+:root.wide #btn-wide { opacity: 0.9; border-color: var(--accent-2); }
+
+/* Gamepad connected / disconnected. */
+#toast {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 3; pointer-events: none;
+  font: bold 13px monospace; color: #fff; background: rgba(0, 0, 0, 0.75); padding: 6px 12px; border-radius: 6px;
+}
+
+/* ---------- Touch controls (phones / tablets) ---------- */
+#touch { display: none; }
+body.touch #touch {
+  display: block; position: fixed; inset: 0; z-index: 2; pointer-events: none;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none;
+}
+body.touch.on-rom #touch { display: none; }
+#touch .dpad, #touch [data-btn] { pointer-events: auto; touch-action: none; }
+#touch .tside { position: absolute; bottom: max(16px, env(safe-area-inset-bottom)); display: grid; gap: 14px; justify-items: center; }
+#touch .tside.left { left: max(16px, env(safe-area-inset-left)); }
+#touch .tside.right { right: max(16px, env(safe-area-inset-right)); }
+#touch .dpad { --s: clamp(120px, 34vmin, 170px); position: relative; width: var(--s); height: var(--s); border-radius: 50%; background: rgba(40, 40, 48, 0.45); }
+#touch .dpad .arm { position: absolute; background: rgba(200, 200, 210, 0.55); border-radius: 4px; }
+#touch .dpad .arm.up, #touch .dpad .arm.down { left: 35%; width: 30%; height: 36%; }
+#touch .dpad .arm.left, #touch .dpad .arm.right { top: 35%; height: 30%; width: 36%; }
+#touch .dpad .arm.up { top: 6%; } #touch .dpad .arm.down { bottom: 6%; }
+#touch .dpad .arm.left { left: 6%; } #touch .dpad .arm.right { right: 6%; }
+#touch .face { --s: clamp(130px, 36vmin, 180px); position: relative; width: var(--s); height: var(--s); }
+#touch .face [data-btn] {
+  position: absolute; width: 36%; height: 36%; border-radius: 50%; display: grid; place-items: center;
+  font: bold clamp(14px, 4vmin, 20px) sans-serif; color: rgba(255, 255, 255, 0.9); border: 2px solid rgba(0, 0, 0, 0.35);
+}
+/* SNES (US) face buttons: X top, A right, B bottom, Y left. */
+#touch .face .x { left: 32%; top: 0; background: rgba(140, 120, 200, 0.6); }
+#touch .face .a { right: 0; top: 32%; background: rgba(140, 120, 200, 0.6); }
+#touch .face .b { left: 32%; bottom: 0; background: rgba(90, 80, 140, 0.65); }
+#touch .face .y { left: 0; top: 32%; background: rgba(90, 80, 140, 0.65); }
+#touch .shoulder, #touch .start {
+  padding: 6px 18px; border-radius: 14px; background: rgba(120, 120, 130, 0.5); color: rgba(255, 255, 255, 0.9);
+  font: bold 13px sans-serif; min-width: 64px; text-align: center;
+}
+#touch .start { position: absolute; left: 50%; transform: translateX(-50%); bottom: max(12px, env(safe-area-inset-bottom)); padding: 4px 12px; font-size: 11px; }
+#touch [data-btn].down { filter: brightness(1.8); }
+body.touch .corner-btns { top: max(8px, env(safe-area-inset-top)); bottom: auto; }
+body.touch #menu-bar { right: auto; left: 8px; max-width: calc(100vw - 200px); }
+
+/* Portrait phone: the picture at the top, the pad below it (not over it). */
+@media (orientation: portrait) {
+  body.touch #screen-game, body.touch #screen-menu { place-items: start center; padding-top: max(44px, env(safe-area-inset-top)); }
+  body.touch #touch .tside { bottom: max(48px, env(safe-area-inset-bottom)); }
+}
+/* Landscape phone: a see-through pad over the corners of the picture. */
+@media (orientation: landscape) {
+  body.touch #touch .dpad, body.touch #touch .face, body.touch #touch .shoulder, body.touch #touch .start { opacity: 0.55; }
+}
 
 /* Fades between screens: black layer whose opacity steps through the SNES's 16 brightness levels. */
 #fade { position: fixed; inset: 0; z-index: 1; background: #000; opacity: 0; pointer-events: none; }

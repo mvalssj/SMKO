@@ -6,7 +6,8 @@ import { loadRaceGfx } from './rom/race-gfx';
 import { NetClient } from './net/client';
 import { LocalChannel } from './net/local';
 import { Race, formatTime } from './game/race';
-import { Renderer } from './game/renderer';
+import { Renderer, SCREEN_W } from './game/renderer';
+import { setupControls } from './controls';
 import { MenuApp, type LobbyView } from './menu/app';
 import { BoardPlayer } from './menu/board-player';
 import { Ceremony } from './menu/ceremony';
@@ -45,6 +46,7 @@ let lastCc: Cc = 50;
 
 function show(screen: 'rom' | 'menu' | 'game') {
   for (const s of ['rom', 'menu', 'game']) $(`screen-${s}`).hidden = s !== screen;
+  document.body.classList.toggle('on-rom', screen === 'rom');
   if (screen === 'menu') menu?.show(); else menu?.hide();
   if (screen === 'menu' && sound) { sound.engine(0); sound.menu(); sound.music(MUSIC.menu); }
   // Back in the menus: they come up from black.
@@ -445,7 +447,7 @@ function startRace(a: StartArgs) {
   void fadeIn(FADES.toRace.in);
   $('results').hidden = true;
   status('results-hint', '');
-  renderer ??= new Renderer($('floor') as HTMLCanvasElement, $('overlay') as HTMLCanvasElement, loadRaceGfx(rom!), $('place-fx') as HTMLCanvasElement);
+  renderer ??= new Renderer($('floor') as HTMLCanvasElement, $('overlay') as HTMLCanvasElement, loadRaceGfx(rom!), $('place-fx') as HTMLCanvasElement, raceWidth());
   const drivers = new Map<number, DriverSprites | null>();
   for (const p of a.players) if (!drivers.has(p.character)) drivers.set(p.character, rom!.loadDriverSprites(p.character, a.track.colors));
   lastDrivers = drivers;
@@ -493,9 +495,40 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && race && !net) { gp = null; endRace(); menu?.toCupSelect(); }
 });
 
-// Fullscreen toggle (the button hides itself while in fullscreen; Esc or F11 leaves).
+// Fullscreen toggle (the button hides itself while in fullscreen; Esc or F11 leaves). Phones also turn sideways.
 $('btn-fullscreen').addEventListener('click', () => {
-  document.documentElement.requestFullscreen?.().catch(() => {});
+  document.documentElement.requestFullscreen?.()
+    .then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape'))
+    .catch(() => {});
+});
+
+// Widescreen: the race picture grows to 348x224 (16:9 with the SNES's 8:7 pixels, nothing stretched: more of
+// the course shows at the sides, the HUD stays where it was). The menus and boards stay 4:3.
+const WIDE_W = 348;
+let wide = localStorageGet('smko-wide') === '1';
+function raceWidth() { return wide ? WIDE_W : SCREEN_W; }
+function applyWide() {
+  document.documentElement.classList.toggle('wide', wide);
+  $('btn-wide').textContent = wide ? '▭ 4:3' : '▭ 16:9';
+  $('btn-wide').title = wide ? 'Voltar à tela original (4:3)' : 'Tela larga 16:9 sem distorcer';
+  renderer?.setWidth(raceWidth());
+}
+$('btn-wide').addEventListener('click', (e) => {
+  wide = !wide;
+  try { localStorage.setItem('smko-wide', wide ? '1' : '0'); } catch { /* private mode */ }
+  applyWide();
+  (e.currentTarget as HTMLElement).blur();
+});
+applyWide();
+
+// Gamepads and the touch pad (they send the keyboard's keys).
+let toastTimer = 0;
+setupControls((text) => {
+  const t = $('toast');
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => { t.hidden = true; }, 2500);
 });
 document.addEventListener('fullscreenchange', () => {
   $('btn-fullscreen').hidden = !!document.fullscreenElement;
