@@ -485,10 +485,19 @@ async function drawLive() {
       g.fillText(v.grid.names[r * v.grid.cols + col], x + w / 2, y + w / 2);
     }
     if (v.zone) {
-      // Outside the safe area: purple, as in the game.
-      g.save(); g.beginPath(); g.rect(0, 0, W, H); g.arc(v.zone.x * s, v.zone.y * s, Math.max(0, v.zone.r * s), 0, Math.PI * 2, true);
-      g.fillStyle = 'rgba(160, 30, 140, 0.45)'; g.fill('evenodd'); g.restore();
-      g.strokeStyle = '#f8f8f8'; g.setLineDash([5, 4]); g.lineWidth = 1.5; g.beginPath(); g.arc(v.next.x * s, v.next.y * s, Math.max(0, v.next.r * s), 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
+      // Outside the safe area: purple, as in the game. The world wraps round, so the circles are drawn
+      // again one world over each way (a circle on the edge shows on both sides).
+      const copies = (c, draw) => { for (const dx of [-W, 0, W]) for (const dy of [-H, 0, H]) draw(c.x * s + dx, c.y * s + dy, Math.max(0, c.r * s)); };
+      const tint = document.createElement('canvas');
+      tint.width = W; tint.height = H;
+      const t = tint.getContext('2d');
+      t.fillStyle = 'rgba(160, 30, 140, 0.45)'; t.fillRect(0, 0, W, H);
+      t.globalCompositeOperation = 'destination-out';
+      copies(v.zone, (x, y, r) => { t.beginPath(); t.arc(x, y, r, 0, Math.PI * 2); t.fill(); });
+      g.drawImage(tint, 0, 0);
+      g.strokeStyle = '#f8f8f8'; g.setLineDash([5, 4]); g.lineWidth = 1.5;
+      copies(v.next, (x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke(); });
+      g.setLineDash([]);
     }
   } else {
     g.strokeStyle = 'rgba(255,255,255,0.15)';
