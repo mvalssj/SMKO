@@ -39,16 +39,14 @@ export class RoyaleState {
   }
 
   /**
-   * The safe area `ms` after the start. When a new circle is announced the bots' map to it is worked out,
-   * a few milliseconds a frame (all at once the first time, before the start).
+   * The safe area `ms` after the start. A new distance map is assembled in small frame-sized slices, so
+   * entering a 24-course Battle Royale never freezes the picture just to prepare bot navigation.
    */
   zone(ms: number): ZoneNow {
     const z = zoneAt(this.circles, ms, this.zoneScale);
     if (z.phase !== this.navPhase) {
-      const first = this.navPhase < 0;
       this.navPhase = z.phase;
-      if (first) this.nav.compute(z.next);
-      else this.nav.begin(z.next);
+      this.nav.begin(z.next);
     }
     this.nav.work(3);
     return z;

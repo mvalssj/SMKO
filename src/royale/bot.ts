@@ -25,16 +25,19 @@ export class NavField {
     this.dist = new Float32Array(this.cols * this.rows).fill(Infinity);
     this.cost = new Uint8Array(this.cols * this.rows);
     for (let i = 0; i < this.cost.length; i++) this.cost[i] = COST[terrainOf(track.genres[i])] ?? 0;
-    // Keep off the edges: tiles next to a wall or a hole cost more, so the way runs down the middle.
+    // Keep off the edges: tiles immediately next to a wall or hole cost more, so the way runs down the middle.
+    // This runs for every tile of the 24-course world. Looking one tile around keeps the same driving behaviour
+    // at a fraction of the startup cost of scanning a 5×5 square for every tile.
     const base = this.cost.slice();
     const { cols, rows } = this;
     for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
       const i = y * cols + x;
       if (!base[i]) continue;
       let edge = 0;
-      for (let dy = -2; dy <= 2 && edge < 2; dy++) for (let dx = -2; dx <= 2; dx++) {
-        const nx = (x + dx + cols) % cols, ny = (y + dy + rows) % rows;
-        if (!base[ny * cols + nx]) { edge = Math.max(edge, Math.abs(dx) <= 1 && Math.abs(dy) <= 1 ? 2 : 1); }
+      for (let k = 0; k < 8; k++) {
+        const nx = (x + NB_X[k] + cols) % cols, ny = (y + NB_Y[k] + rows) % rows;
+        if (!base[ny * cols + nx]) edge = Math.max(edge, k < 4 ? 2 : 1);
+        if (edge === 2) break;
       }
       this.cost[i] = Math.min(60, base[i] + edge * 12);
     }
@@ -109,7 +112,8 @@ export class NavField {
           job.pending++;
         }
       }
-      if ((++n & 4095) === 0 && performance.now() - t0 > budgetMs) return false;
+      // Check often enough for the 3 ms frame budget to mean something on slower phones.
+      if ((++n & 511) === 0 && performance.now() - t0 > budgetMs) return false;
     }
     this.dist.set(dist);
     this.job = null;
