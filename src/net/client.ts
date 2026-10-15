@@ -1,4 +1,5 @@
 import type { ClientMsg, KartNetState, ServerMsg } from '../../shared/protocol';
+import { wrapDX, wrapDY, wrapX, wrapY } from '../../shared/royale';
 
 type Handler = (msg: ServerMsg) => void;
 
@@ -75,7 +76,8 @@ export class RemoteKarts {
       const f = Math.min(1, Math.max(0, (target - a.t) / (b.t - a.t)));
       let da = b.k.a - a.k.a;
       da = Math.atan2(Math.sin(da), Math.cos(da));
-      out.push({ ...b.k, x: a.k.x + (b.k.x - a.k.x) * f, y: a.k.y + (b.k.y - a.k.y) * f, a: a.k.a + da * f });
+      // (The short way round: in the Battle Royale world a kart can drive off one edge and in at the other.)
+      out.push({ ...b.k, x: wrapX(a.k.x + wrapDX(b.k.x - a.k.x) * f), y: wrapY(a.k.y + wrapDY(b.k.y - a.k.y) * f), a: a.k.a + da * f });
     }
     return out;
   }

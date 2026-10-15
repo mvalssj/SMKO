@@ -130,7 +130,11 @@ plataformas.
 
 No menu principal: **BATTLE ROYALE**. São 100 pilotos num mundo aberto que junta todas as pistas do jogo: as 20 do GP e as 4 de batalha. Vence o último que ainda tiver balões.
 
-- **O mundo:** é uma grade de 6 × 4 pistas agrupadas em 8 regiões pelo tipo de terreno:
+- **O mundo é um planetinha:** não tem borda. Quem sai pela direita volta pela esquerda, e quem sai por cima volta por baixo, como num planeta.
+  - O chão faz a curva do Animal Crossing: ao longe ele cai, o horizonte fica um pouco mais baixo e perto, e os karts surgem subindo por ele conforme você se aproxima. O botão **◠ curvo / ▬ plano**, no canto da tela, deixa o chão plano como no SNES (a escolha fica salva).
+  - Distâncias, mira dos cascos, bots, zona, colisões e a rede contam sempre o caminho mais curto, atravessando a borda se for o caso. A zona também pode ficar em cima da emenda.
+  - As faixas das quatro bordas se juntam com as do outro lado e formam mais um espaço entre pistas, que segue a mesma regra das regiões: chão da região ou estrada.
+- **As regiões:** a grade de 6 × 4 pistas é agrupada em 8 regiões pelo tipo de terreno:
   ```
   GELO   GELO   GELO  │ FANTASMA FANTASMA FANTASMA
   DONUT  DONUT  MARIO   MARIO    MARIO   CASTELO
@@ -140,7 +144,7 @@ No menu principal: **BATTLE ROYALE**. São 100 pilotos num mundo aberto que junt
   - Dentro de uma região as pistas ficam coladas, sem fronteira: o espaço entre elas é preenchido com o chão da própria região (grama, neve, chocolate, areia do Mario Circuit) e as cercas da borda são retiradas.
   - Onde o chão da região é vazio, lava ou mar fundo (Ghost Valley, Bowser Castle, Koopa Beach), uma ponte com o piso das próprias pistas (tábuas, tijolos, areia) passa pelo meio do espaço entre elas.
   - Entre regiões diferentes, e só ali, ficam as estradas no estilo do Mario Circuit (asfalto listrado e bordas copiados das retas do Mario Circuit 1 e 2), como o rejunte entre azulejos, com cruzamentos de asfalto.
-  - De cada lado de cada pista (menos na borda do mundo) sai uma entrada que abre a cerca e vai até o traçado, atravessando o que houver no caminho: canos, vazio, água, lava. Vinda da estrada, é de asfalto; vinda da própria região, é do piso da pista.
+  - De cada lado de cada pista sai uma entrada que abre a cerca e vai até o traçado, atravessando o que houver no caminho: canos, vazio, água, lava. Vinda da estrada, é de asfalto; vinda da própria região, é do piso da pista.
   - Os últimos círculos da zona evitam as regiões mortais (Ghost Valley, Bowser Castle e Rainbow Road).
   - O verde de fora das cercas, que na pista original é "fora dos limites", vira grama transitável.
   - Cada pista mantém seus blocos, terreno, objetos (canos, Thwomps, toupeiras, plantas, peixes), caixas de item e moedas.
@@ -163,7 +167,7 @@ No menu principal: **BATTLE ROYALE**. São 100 pilotos num mundo aberto que junt
   - Cada jogador recebe os karts próximos 20 vezes por segundo e os distantes 4 vezes por segundo.
 - **Sem servidor:** você e 99 bots, tudo no navegador.
 
-Teste: `npx tsx tools/royale-test.ts "Super Mario Kart (USA).sfc"`. Ele confere que todas as pistas estão ligadas, que a zona fecha dentro do mundo e que os bots andam e caem pouco.
+Teste: `npx tsx tools/royale-test.ts "Super Mario Kart (USA).sfc"`. Ele confere que todas as pistas estão ligadas, que um kart atravessa a borda do mundo pela estrada e volta do outro lado, que distâncias e zona contam o caminho mais curto, que a zona fecha dentro do mundo (e quase nunca no vazio ou na lava) e que os bots andam e caem pouco.
 
 ## O que já funciona
 

@@ -12,7 +12,7 @@ import {
 import { DEFAULT_ODDS, ItemAuthority, validOdds } from '../shared/items';
 import {
   COURSE_TILES, GAP_TILES, GRID_COLS, GRID_ROWS, MARGIN_TILES, ROYALE_PLAYERS, RoyaleAuthority, WORLD_COLS, WORLD_H, WORLD_ROWS, WORLD_W,
-  WORLD_LAYOUT, worldCourseAt, zoneAt,
+  WORLD_LAYOUT, worldCourseAt, wrapDX, wrapDY, wrapDist, wrapX, wrapY, zoneAt,
 } from '../shared/royale';
 import { COURSE_NAMES } from '../shared/names';
 import { adminOut, adminTick, adminWarn, record, registerAdminSource, settings } from './admin';
@@ -208,8 +208,8 @@ function takeOver(m: Match, ws: WebSocket, id: number, character: number) {
   const people = humans(m).flatMap((p) => (p.kart ? [p.kart] : []));
   const score = (b: RPlayer) => {
     if (!b.kart) return 0;
-    const inZone = Math.hypot(b.kart.x - zone.x, b.kart.y - zone.y) < zone.r * 0.8 ? 1e6 : 0;
-    const away = people.length ? Math.min(...people.map((k) => Math.hypot(k.x - b.kart!.x, k.y - b.kart!.y))) : 0;
+    const inZone = wrapDist(b.kart.x, b.kart.y, zone.x, zone.y) < zone.r * 0.8 ? 1e6 : 0;
+    const away = people.length ? Math.min(...people.map((k) => wrapDist(k.x, k.y, b.kart!.x, b.kart!.y))) : 0;
     return inZone + away;
   };
   const bot = bots(m, true).sort((a, b) => score(b) - score(a))[0];
@@ -261,7 +261,7 @@ function tick(m: Match) {
     const list = karts.filter((k) => {
       if (k.id === p.id || (p.id === m.host && k.info.cpu)) return false;
       if (all || (p.id === m.host && !k.info.cpu)) return true;
-      return !!f && Math.abs(k.kart!.x - f.x) < NEAR_PX && Math.abs(k.kart!.y - f.y) < NEAR_PX;
+      return !!f && Math.abs(wrapDX(k.kart!.x - f.x)) < NEAR_PX && Math.abs(wrapDY(k.kart!.y - f.y)) < NEAR_PX;
     }).map((k) => k.kart!);
     if (list.length) p.ws.send(JSON.stringify({ t: 'states', karts: list } satisfies ServerMsg));
   }
@@ -273,7 +273,7 @@ function updateKart(m: Match, p: RPlayer, k: KartNetState) {
   const now = Date.now();
   if (p.kart && p.lastStateAt) {
     const dt = (now - p.lastStateAt) / 1000;
-    const dist = Math.hypot(k.x - p.kart.x, k.y - p.kart.y);
+    const dist = wrapDist(k.x, k.y, p.kart.x, p.kart.y);
     const rescued = p.kart.f > 0 || k.f > 0;
     if (!rescued && dist > MAX_KART_SPEED * dt + MOVE_SLACK && (p.rejected = (p.rejected ?? 0) + 1) < 10) {
       // A warning only for a jump far beyond what messages arriving in a bunch (a bad connection) explain.
@@ -284,7 +284,7 @@ function updateKart(m: Match, p: RPlayer, k: KartNetState) {
   }
   p.lastStateAt = now;
   p.kart = {
-    id: p.id, x: clamp(k.x, 0, WORLD_W), y: clamp(k.y, 0, WORLD_H), a: k.a, d: Number.isFinite(k.d) ? clamp(k.d!, -1, 1) : 0,
+    id: p.id, x: wrapX(k.x), y: wrapY(k.y), a: k.a, d: Number.isFinite(k.d) ? clamp(k.d!, -1, 1) : 0,
     s: clamp(k.s, -4, 6), lap: 0, p: 0, f: clamp(k.f, 0, 255), h: clamp(k.h, 0, 64), e: k.e & 15,
   };
   m.royale.updatePos(p.id, p.kart.x, p.kart.y);

@@ -18,6 +18,13 @@ export const CHASE_DISTANCE = 34;
 /** Own kart's wheels on line 101 (sprite at y = 70, 32 tall): HORIZON + CAM_HEIGHT * FOCAL / CHASE_DISTANCE = 102. */
 export const FOCAL = ((102 - HORIZON) * CHASE_DISTANCE) / CAM_HEIGHT;
 
+/**
+ * Battle Royale's little planet: the floor curves away from the camera like a log rolling under it (as in
+ * Animal Crossing). A point `z` ahead lies z² / (2 R) below the flat floor, so the far floor drops, the
+ * horizon comes a few lines lower and nearer, and karts come up over it as you get closer.
+ */
+export const PLANET_RADIUS = 7000;
+
 /** Course map (lower screen): the course leans away, so the far edge is narrower. */
 export const MAP_TILT = 0.7;
 /** World pixels per screen pixel on the nearest map line. */
@@ -101,7 +108,8 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 
 /**
  * The floor of a world bigger than one course (Battle Royale): uMap holds an atlas tile number per tile
- * (red = low byte, green = high byte), uFill the atlas of 8x8 tiles; outside the world, tile `outside`.
+ * (red = low byte, green = high byte), uFill the atlas of 8x8 tiles. The world wraps round (floorAt); the
+ * map of the whole world (floorMapAt) shows tile `outside` beyond it.
  */
 export interface WorldShape { cols: number; rows: number; atlasW: number; atlasH: number; outside: number }
 
@@ -111,17 +119,30 @@ vec3 tileAt(float id, vec2 p) {
   vec2 a = vec2(mod(id, per), floor(id / per)) * 8.0 + floor(p) + 0.5;
   return texture2D(uFill, a / vec2(${world.atlasW}.0, ${world.atlasH}.0)).rgb;
 }
+const vec2 WORLD = vec2(${world.cols * 8}.0, ${world.rows * 8}.0);
 vec3 floorAt(vec2 w) {
   vec2 t = floor(w / 8.0);
   vec2 p = w - t * 8.0;
-  if (t.x < 0.0 || t.y < 0.0 || t.x >= ${world.cols}.0 || t.y >= ${world.rows}.0) return tileAt(${world.outside}.0, p);
+  t = mod(t, vec2(${world.cols}.0, ${world.rows}.0));
   vec4 c = texture2D(uMap, (t + 0.5) / vec2(${world.cols}.0, ${world.rows}.0));
   return tileAt(floor(c.r * 255.0 + 0.5) + floor(c.g * 255.0 + 0.5) * 256.0, p);
+}
+vec3 floorMapAt(vec2 w) {
+  if (w.x < 0.0 || w.y < 0.0 || w.x >= WORLD.x || w.y >= WORLD.y) return tileAt(${world.outside}.0, w - floor(w / 8.0) * 8.0);
+  return floorAt(w);
+}
+// From the safe area's centre, the short way round.
+float zoneDistance(vec2 w) {
+  vec2 d = w - uZone.xy;
+  d -= WORLD * floor(d / WORLD + 0.5);
+  return length(d);
 }` : `
 vec3 floorAt(vec2 w) {
   if (w.x < 0.0 || w.y < 0.0 || w.x >= ${MAP_PX}.0 || w.y >= ${MAP_PX}.0) return texture2D(uFill, mod(w, 8.0) / 8.0).rgb;
   return texture2D(uMap, w / ${MAP_PX}.0).rgb;
-}`;
+}
+vec3 floorMapAt(vec2 w) { return floorAt(w); }
+float zoneDistance(vec2 w) { return distance(w, uZone.xy); }`;
 
 /** Fragment shader for a picture `w` pixels wide (the view widens, the scale stays the original's). */
 const frag = (w: number, world: WorldShape | null = null) => `
@@ -138,10 +159,12 @@ uniform vec2 uBgScroll;
 uniform vec2 uMapOrigin;
 uniform float uMapZoom;
 uniform vec3 uZone;
+uniform float uCurve;
+uniform float uSkyDrop;
 ${floorFn(world)}
 // Battle Royale: outside the safe area the floor is tinted (uZone = centre, radius; radius < 0 = none).
 vec3 zoned(vec3 c, vec2 w) {
-  if (uZone.z < 0.0 || distance(w, uZone.xy) <= uZone.z) return c;
+  if (uZone.z < 0.0 || zoneDistance(w) <= uZone.z) return c;
   return mix(c, vec3(0.42, 0.06, 0.36), 0.5);
 }
 
@@ -149,10 +172,21 @@ void main() {
   float sy = floor(${SCREEN_H}.0 - gl_FragCoord.y);
   float sx = floor(gl_FragCoord.x);
   vec3 c = vec3(0.0);
-  if (sy >= ${SKY_TOP}.0 && sy < ${HORIZON}.0) {
-    // Sky band: the two scenery layers, bottom row on the last line above the road. Each wraps once per turn.
+  // Race view (Mode 7): one floor line per screen line, z ahead. On the little planet (uCurve = 1 / 2R) a
+  // point z ahead is z * z * uCurve below the flat floor; past the planet's horizon there is only sky.
+  float dy = sy - ${HORIZON}.0 + 1.0;
+  float z = ${CAM_HEIGHT}.0 * uFocal / dy;
+  bool ground = sy >= ${HORIZON}.0 && sy < ${VIEW_BOTTOM}.0;
+  if (ground && uCurve > 0.0) {
+    float q = dy / uFocal, disc = q * q - 4.0 * uCurve * ${CAM_HEIGHT}.0;
+    if (disc < 0.0) ground = false;
+    else z = (q - sqrt(disc)) / (2.0 * uCurve);
+  }
+  if (sy >= ${SKY_TOP}.0 && !ground && sy < ${VIEW_BOTTOM}.0) {
+    // Sky band: the two scenery layers, bottom row on the last line above the road (uSkyDrop lines lower on
+    // the little planet). Each wraps once per turn.
     c = uSky;
-    float by = sy - (${HORIZON}.0 - ${BG_HEIGHT}.0);
+    float by = sy - (${HORIZON}.0 + uSkyDrop - ${BG_HEIGHT}.0);
     if (by >= 0.0) {
       float v = (by + 0.5) / ${BG_HEIGHT}.0;
       vec4 back = texture2D(uBgBack, vec2(fract((sx - ${(w - SCREEN_W) >> 1}.0 + uBgScroll.y + 0.5) / ${BG_BACK_W}.0), v));
@@ -160,10 +194,7 @@ void main() {
       c = mix(c, back.rgb, back.a);
       c = mix(c, front.rgb, front.a);
     }
-  } else if (sy >= ${HORIZON}.0 && sy < ${VIEW_BOTTOM}.0) {
-    // Race view (Mode 7): one floor line per screen line.
-    float dy = sy - ${HORIZON}.0 + 1.0;
-    float z = ${CAM_HEIGHT}.0 * uFocal / dy;
+  } else if (ground) {
     float lateral = (sx + 0.5 - ${w / 2}.0) * z / uFocal;
     vec2 fwd = vec2(sin(uAngle), -cos(uAngle));
     vec2 right = vec2(cos(uAngle), sin(uAngle));
@@ -175,13 +206,13 @@ void main() {
     float wy = ${MAP_PX}.0 * uMapZoom * t * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
     float scale = ${MAP_SCALE} * uMapZoom * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
     vec2 mp = uMapOrigin + vec2(${MAP_PX / 2}.0 * uMapZoom + (sx + 0.5 - ${w / 2}.0) * scale, wy);
-    c = zoned(floorAt(mp), mp);
+    c = zoned(floorMapAt(mp), mp);
   }
   gl_FragColor = vec4(c, 1.0);
 }
 `;
 
-const UNIFORMS = ['uMap', 'uFill', 'uBgFront', 'uBgBack', 'uCam', 'uAngle', 'uFocal', 'uSky', 'uBgScroll', 'uMapOrigin', 'uMapZoom', 'uZone'];
+const UNIFORMS = ['uMap', 'uFill', 'uBgFront', 'uBgBack', 'uCam', 'uAngle', 'uFocal', 'uSky', 'uBgScroll', 'uMapOrigin', 'uMapZoom', 'uZone', 'uCurve', 'uSkyDrop'];
 
 export interface DriverFrames {
   /** frames[distanceRow][angleSlot] */
@@ -224,6 +255,8 @@ export class Renderer {
   mapZoom = 1;
   /** Battle Royale safe area (floor outside it is tinted), or null. */
   zone: { x: number; y: number; r: number } | null = null;
+  /** The planet's curve, 1 / (2 R) (0 = flat, as on the SNES). */
+  curve = 0;
 
   constructor(private floorCanvas: HTMLCanvasElement, private overlayCanvas: HTMLCanvasElement, private gfx: RaceGfx | null, private placeCanvas?: HTMLCanvasElement, width = SCREEN_W) {
     this.placeFx = placeCanvas?.getContext('2d') ?? null;
@@ -281,6 +314,7 @@ export class Renderer {
     this.mapOrigin = { x: 0, y: 0 };
     this.mapZoom = 1;
     this.zone = null;
+    this.curve = 0;
     if (world) {
       const ids = new Uint8Array(world.cols * world.rows * 4);
       for (let i = 0; i < world.ids.length; i++) { ids[i * 4] = world.ids[i] & 255; ids[i * 4 + 1] = world.ids[i] >> 8; ids[i * 4 + 3] = 255; }
@@ -364,6 +398,9 @@ export class Renderer {
     gl.uniform2f(u.uMapOrigin, this.mapOrigin.x, this.mapOrigin.y);
     gl.uniform1f(u.uMapZoom, this.mapZoom);
     gl.uniform3f(u.uZone, this.zone?.x ?? 0, this.zone?.y ?? 0, this.zone ? this.zone.r : -1);
+    gl.uniform1f(u.uCurve, this.curve);
+    // Lines of sky below the old horizon: the last line where the floor can't be seen any more.
+    gl.uniform1f(u.uSkyDrop, this.curve > 0 ? Math.max(0, Math.ceil(FOCAL * Math.sqrt(4 * this.curve * CAM_HEIGHT)) - 1) : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     const layer = this.layer;
@@ -372,12 +409,17 @@ export class Renderer {
     layer.clear();
     layer.ox = 0;
     layer.setClip(HORIZON, VIEW_BOTTOM);
-    drawRaceView(layer, cam, sprites, objects, { drivers: this.drivers, objectFrames: this.objectFrames, objectSizes: this.objectSizes, itemFrames: this.itemFrames }, this.tick);
+    const world = this.world && { w: this.world.cols * 8, h: this.world.rows * 8 };
+    drawRaceView(layer, cam, sprites, objects, {
+      drivers: this.drivers, objectFrames: this.objectFrames, objectSizes: this.objectSizes, itemFrames: this.itemFrames, world, curve: this.curve,
+    }, this.tick);
     layer.setClip(MAP_TOP, MAP_BOTTOM);
     // The course map is centred in the picture, the HUD in the original's 256 columns.
     layer.ox = this.pad;
     for (const m of markers) {
-      const p = mapPoint(m.x - this.mapOrigin.x, m.y - this.mapOrigin.y, this.mapZoom);
+      // (In the world, wherever the kart is counted, brought back into the world.)
+      const mx = world ? m.x - world.w * Math.floor(m.x / world.w) : m.x, my = world ? m.y - world.h * Math.floor(m.y / world.h) : m.y;
+      const p = mapPoint(mx - this.mapOrigin.x, my - this.mapOrigin.y, this.mapZoom);
       if (p && (p.x < -8 || p.x > SCREEN_W + 8)) continue;
       if (p) this.hud!.head(m.character, p.x, p.y, m.palette, m.small);
     }
@@ -405,27 +447,36 @@ export interface SpriteSet {
   /** Hand-drawn smaller sizes of the track object (largest first), per palette. */
   objectSizes?: SpriteFrame[][];
   itemFrames: SpriteFrame[];
+  /** The Battle Royale world's size in pixels: it wraps round, so things are seen the short way round. */
+  world?: { w: number; h: number } | null;
+  /** The planet's curve, 1 / (2 R) (0 = flat). */
+  curve?: number;
 }
 
 /** Drivers, track objects and items of the race view, far to near, at the SNES resolution. */
 export function drawRaceView(layer: Layer, cam: Camera, sprites: Sprite[], objects: ObjectSprite[], set: SpriteSet, tick: number) {
   const fx = Math.sin(cam.angle), fy = -Math.cos(cam.angle);
   const rx = Math.cos(cam.angle), ry = Math.sin(cam.angle);
+  const w = set.world, curve = set.curve ?? 0;
   const project = <T extends { x: number; y: number }>(s: T) => {
-    const dx = s.x - cam.x, dy = s.y - cam.y;
+    let dx = s.x - cam.x, dy = s.y - cam.y;
+    if (w) { dx -= w.w * Math.round(dx / w.w); dy -= w.h * Math.round(dy / w.h); }
     return { s, dx, dy, z: dx * fx + dy * fy, lat: dx * rx + dy * ry };
   };
+  // On the little planet nothing shows past its horizon (sqrt(2 R h) ahead).
+  const far = curve > 0 ? Math.min(900, Math.sqrt(CAM_HEIGHT / curve)) : 900;
   type Item = ReturnType<typeof project<Sprite>> | (ReturnType<typeof project<ObjectSprite>> & { object: true });
   const items: Item[] = [
     ...sprites.map(project),
     ...objects.map((o) => ({ ...project(o), object: true as const })),
   ];
-  const projected = items.filter((p) => p.z > 4 && p.z < 900).sort((a, b) => b.z - a.z);
+  const projected = items.filter((p) => p.z > 4 && p.z < far).sort((a, b) => b.z - a.z);
 
   for (const item of projected) {
     const k = FOCAL / item.z; // screen px per world px
     const sx = layer.w / 2 + item.lat * k;
-    const ground = HORIZON + (CAM_HEIGHT * FOCAL) / item.z;
+    // (Further down the curve on the little planet: z * z * curve below the flat floor.)
+    const ground = HORIZON + ((CAM_HEIGHT + item.z * item.z * curve) * FOCAL) / item.z;
     if ('object' in item) {
       const o = item.s;
       const frames = o.item ? set.itemFrames : o.frames ?? set.objectFrames;

@@ -1,9 +1,10 @@
 // Battle Royale computer drivers. They find their way across the world with a distance map to the safe
-// area (worked out once per circle over the whole floor), steer round walls and holes with feelers, pick up
-// item boxes, hunt the nearest rivals and use their items the way the game's items work.
+// area (worked out once per circle over the whole floor, which wraps round), steer round walls and holes with
+// feelers, pick up item boxes, hunt the nearest rivals and use their items the way the game's items work.
+// Every direction and distance is taken the short way round the world (wrapDX / wrapDY).
 
 import type { ItemKind } from '../../shared/protocol';
-import { insideZone, type Circle } from '../../shared/royale';
+import { insideZone, wrapDX, wrapDY, wrapX, wrapY, type Circle } from '../../shared/royale';
 import { TILE, aiAreaContains, type AiArea } from '../rom/rom';
 import { NO_INPUT, terrainAt, terrainOf, type Input, type Kart } from '../game/physics';
 import type { WorldTrack } from './world';
@@ -26,13 +27,14 @@ export class NavField {
     for (let i = 0; i < this.cost.length; i++) this.cost[i] = COST[terrainOf(track.genres[i])] ?? 0;
     // Keep off the edges: tiles next to a wall or a hole cost more, so the way runs down the middle.
     const base = this.cost.slice();
-    for (let y = 0; y < this.rows; y++) for (let x = 0; x < this.cols; x++) {
-      const i = y * this.cols + x;
+    const { cols, rows } = this;
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      const i = y * cols + x;
       if (!base[i]) continue;
       let edge = 0;
       for (let dy = -2; dy <= 2 && edge < 2; dy++) for (let dx = -2; dx <= 2; dx++) {
-        const nx = x + dx, ny = y + dy;
-        if (nx < 0 || ny < 0 || nx >= this.cols || ny >= this.rows || !base[ny * this.cols + nx]) { edge = Math.max(edge, Math.abs(dx) <= 1 && Math.abs(dy) <= 1 ? 2 : 1); }
+        const nx = (x + dx + cols) % cols, ny = (y + dy + rows) % rows;
+        if (!base[ny * cols + nx]) { edge = Math.max(edge, Math.abs(dx) <= 1 && Math.abs(dy) <= 1 ? 2 : 1); }
       }
       this.cost[i] = Math.min(60, base[i] + edge * 12);
     }
@@ -60,11 +62,13 @@ export class NavField {
     const buckets: number[][] = Array.from({ length: 8 }, () => []);
     let pending = 0;
     const seed = (radius: number) => {
-      const x0 = Math.max(0, Math.floor((goal.x - radius) / TILE)), x1 = Math.min(cols - 1, Math.ceil((goal.x + radius) / TILE));
-      const y0 = Math.max(0, Math.floor((goal.y - radius) / TILE)), y1 = Math.min(rows - 1, Math.ceil((goal.y + radius) / TILE));
-      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      // (Round the goal, either way across the world's edges; each tile once.)
+      const sx = Math.min(cols, Math.ceil((2 * radius) / TILE) + 1), sy = Math.min(rows, Math.ceil((2 * radius) / TILE) + 1);
+      const x0 = Math.floor((goal.x - radius) / TILE), y0 = Math.floor((goal.y - radius) / TILE);
+      for (let v = 0; v < sy; v++) for (let u = 0; u < sx; u++) {
+        const x = (((x0 + u) % cols) + cols) % cols, y = (((y0 + v) % rows) + rows) % rows;
         const i = y * cols + x;
-        if (!cost[i] || Math.hypot((x + 0.5) * TILE - goal.x, (y + 0.5) * TILE - goal.y) > radius) continue;
+        if (!cost[i] || dist[i] === 0 || Math.hypot(wrapDX((x + 0.5) * TILE - goal.x), wrapDY((y + 0.5) * TILE - goal.y)) > radius) continue;
         dist[i] = 0;
         buckets[0].push(i);
         pending++;
@@ -94,8 +98,7 @@ export class NavField {
       if (dist[i] < d) continue;
       const x = i % cols, y = (i - x) / cols;
       for (let k = 0; k < 8; k++) {
-        const nx = x + NB_X[k], ny = y + NB_Y[k];
-        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+        const nx = (x + NB_X[k] + cols) % cols, ny = (y + NB_Y[k] + rows) % rows;
         const j = ny * cols + nx;
         const c = cost[j];
         if (!c) continue;
@@ -116,13 +119,11 @@ export class NavField {
   /** A point a few tiles further along the way to the safe area, from (x, y). */
   ahead(x: number, y: number, steps = 6): { x: number; y: number } | null {
     const { cols, rows, dist } = this;
-    let tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
-    if (tx < 0 || ty < 0 || tx >= cols || ty >= rows) return null;
+    let tx = Math.floor(wrapX(x) / TILE) % cols, ty = Math.floor(wrapY(y) / TILE) % rows;
     for (let s = 0; s < steps; s++) {
       let best = dist[ty * cols + tx], bx = tx, by = ty;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const nx = tx + dx, ny = ty + dy;
-        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+        const nx = (tx + dx + cols) % cols, ny = (ty + dy + rows) % rows;
         const d = dist[ny * cols + nx];
         if (d < best) { best = d; bx = nx; by = ny; }
       }
@@ -153,6 +154,8 @@ export interface BotView {
 }
 
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+/** Heading from the kart to a point, the short way round the world. */
+const heading = (k: { x: number; y: number }, p: { x: number; y: number }) => Math.atan2(wrapDX(p.x - k.x), -wrapDY(p.y - k.y));
 const FEELERS = [0, 0.3, -0.3, 0.6, -0.6, 0.95, -0.95, 1.4, -1.4];
 
 /**
@@ -202,7 +205,7 @@ export class BotDriver {
         this.rescued = true;
         let best = k.safe, bestD = Infinity;
         for (const p of v.spawns) {
-          const d = (p.x - k.x) ** 2 + (p.y - k.y) ** 2;
+          const d = wrapDX(p.x - k.x) ** 2 + wrapDY(p.y - k.y) ** 2;
           if (d < bestD) { bestD = d; best = p as typeof best; }
         }
         k.safe = { x: best.x, y: best.y, angle: best.angle };
@@ -218,7 +221,7 @@ export class BotDriver {
     // (Checked every 1.5 s, counted from the end of the last back-off: a kart needs a moment to get going.)
     if (v.frame < this.reverseUntil) this.lastPos = { x: k.x, y: k.y, frame: v.frame };
     else if (v.frame - this.lastPos.frame >= 90) {
-      if (Math.hypot(k.x - this.lastPos.x, k.y - this.lastPos.y) < 12 && v.frame >= this.reverseUntil && k.air === 0) {
+      if (Math.hypot(wrapDX(k.x - this.lastPos.x), wrapDY(k.y - this.lastPos.y)) < 12 && v.frame >= this.reverseUntil && k.air === 0) {
         this.reverseUntil = v.frame + 60;
         // Backing up turns the nose the opposite way to the wheel: steer so it ends up pointing where we want.
         this.reverseSteer = wrap(this.lastAim - k.angle) > 0 ? -1 : 1;
@@ -236,14 +239,14 @@ export class BotDriver {
       if (c) {
         this.area = areaAt(c.ai, k.x, k.y, this.area);
         const t = c.path[this.area];
-        if (t) aim = Math.atan2(t.x - k.x, -(t.y - k.y));
+        if (t) aim = heading(k, t);
         if (aim !== null && this.blocked) aim = this.clearHeading(k, aim);
       }
     }
     if (aim === null) {
       const wp = this.plan.kind === 'seek' ? this.plan : v.nav.ahead(k.x, k.y, 8);
       if (!wp) return { ...NO_INPUT, accel: true };
-      aim = this.clearHeading(k, Math.atan2(wp.x - k.x, -(wp.y - k.y)));
+      aim = this.clearHeading(k, heading(k, wp));
     }
     this.lastAim = aim;
     return this.steer(k, wrap(this.avoidObjects(k, aim) - k.angle));
@@ -264,14 +267,14 @@ export class BotDriver {
   private obstacles: { x: number; y: number }[] = [];
   private findObstacles(k: Kart) {
     this.obstacles = this.track.objects.filter((o) => (o.kind === 'pipe' || o.kind === 'plant' || o.kind === 'pillar')
-      && Math.abs(o.x - k.x) < 160 && Math.abs(o.y - k.y) < 160);
+      && Math.abs(wrapDX(o.x - k.x)) < 160 && Math.abs(wrapDY(o.y - k.y)) < 160);
   }
 
   /** Swerve round pipes, plants and pillars just ahead (as the CPUs do). */
   private avoidObjects(k: Kart, aim: number): number {
     const fx = Math.sin(k.angle), fy = -Math.cos(k.angle);
     for (const o of this.obstacles) {
-      const ox = o.x - k.x, oy = o.y - k.y;
+      const ox = wrapDX(o.x - k.x), oy = wrapDY(o.y - k.y);
       const ahead = ox * fx + oy * fy, side = ox * -fy + oy * fx;
       if (ahead > 0 && ahead < 30 + k.speed * 16 && Math.abs(side) < 13) return k.angle + (side > 0 ? -0.5 : 0.5);
     }
@@ -308,7 +311,7 @@ export class BotDriver {
   }
 
   private think(k: Kart, v: BotView) {
-    const dist = (p: { x: number; y: number }) => Math.hypot(p.x - k.x, p.y - k.y);
+    const dist = (p: { x: number; y: number }) => Math.hypot(wrapDX(p.x - k.x), wrapDY(p.y - k.y));
     this.findObstacles(k);
     if (v.item !== this.heldItem) { this.heldItem = v.item; this.itemSince = v.frame; }
 
@@ -327,7 +330,7 @@ export class BotDriver {
     if (roam && v.frame >= this.roamAt + 60 * 15) this.roamAt = v.frame + 60 * (20 + Math.floor(this.rand() * 40));
     // A rival with a star coming: get out of its way.
     if (near && near.star && nearD < 120) {
-      this.plan = { kind: 'seek', x: k.x + (k.x - near.x) * 2, y: k.y + (k.y - near.y) * 2 };
+      this.plan = { kind: 'seek', x: wrapX(k.x - wrapDX(near.x - k.x) * 2), y: wrapY(k.y - wrapDY(near.y - k.y) * 2) };
       return;
     }
     // Close by and in sight: an item box (no item), or a rival to hit (an item to throw).
@@ -335,7 +338,7 @@ export class BotDriver {
       if (!v.item) {
         let box: { x: number; y: number } | null = null, boxD = 200;
         for (const b of v.boxes) {
-          if (Math.abs(b.x - k.x) > 200 || Math.abs(b.y - k.y) > 200) continue;
+          if (Math.abs(wrapDX(b.x - k.x)) > 200 || Math.abs(wrapDY(b.y - k.y)) > 200) continue;
           const d = dist(b);
           if (d < boxD && this.ahead(k, b, 1.2) && this.inSight(k, b)) { boxD = d; box = b; }
         }
@@ -374,14 +377,15 @@ export class BotDriver {
 
   /** Within `cone` radians of straight ahead. */
   private ahead(k: Kart, p: { x: number; y: number }, cone: number): boolean {
-    return Math.abs(wrap(Math.atan2(p.x - k.x, -(p.y - k.y)) - k.angle)) < cone;
+    return Math.abs(wrap(heading(k, p) - k.angle)) < cone;
   }
 
   /** Straight line with floor all the way (sampled). */
   private inSight(k: Kart, p: { x: number; y: number }): boolean {
-    const d = Math.hypot(p.x - k.x, p.y - k.y), n = Math.ceil(d / 12);
+    const dx = wrapDX(p.x - k.x), dy = wrapDY(p.y - k.y);
+    const d = Math.hypot(dx, dy), n = Math.ceil(d / 12);
     for (let i = 1; i < n; i++) {
-      const t = terrainAt(this.track, k.x + ((p.x - k.x) * i) / n, k.y + ((p.y - k.y) * i) / n);
+      const t = terrainAt(this.track, k.x + (dx * i) / n, k.y + (dy * i) / n);
       if (t === 'wall' || t === 'fall') return false;
     }
     return true;
@@ -392,7 +396,7 @@ export class BotDriver {
     if (!item || this.useItem) return;
     const held = v.frame - this.itemSince;
     if (held < 20 + (1 - this.skill) * 60) return;
-    const ahead = near ? Math.abs(wrap(Math.atan2(near.x - k.x, -(near.y - k.y)) - k.angle)) : Math.PI;
+    const ahead = near ? Math.abs(wrap(heading(k, near) - k.angle)) : Math.PI;
     const use = (back = false) => { this.useItem = true; this.useBack = back; };
     switch (item) {
       case 'greenShell':

@@ -15,11 +15,11 @@ import {
   isBoosting, kartFacing, kartHeight, raceGeometry, terrainAt, restoreTiles, spinOut, stepKart, tileCluster, type Bumper, type Kart, type SavedTile,
   genreAt,
 } from './physics';
-import { insideZone, type ZoneNow } from '../../shared/royale';
+import { WORLD_H, WORLD_W, insideZone, wrapDX, wrapDY, wrapX, wrapY, type ZoneNow } from '../../shared/royale';
 import { BotDriver, type Rival } from '../royale/bot';
 import type { RoyaleState } from '../royale/state';
 import { regionAt } from '../royale/world';
-import { CHASE_DISTANCE, MAP_SCALE, Renderer, SCREEN_W, type MapMarker, type ObjectSprite, type Sprite } from './renderer';
+import { CHASE_DISTANCE, MAP_SCALE, PLANET_RADIUS, Renderer, SCREEN_W, type MapMarker, type ObjectSprite, type Sprite } from './renderer';
 import { PLACE_RED, RaceHud, placeRainbow, type LakituShow } from './hud';
 import { CpuDriver, rubberBand } from './cpu';
 import { objectState } from './objects';
@@ -105,6 +105,8 @@ export interface Hud {
 }
 
 export class Race {
+  /** Battle Royale: the floor curves away like a little planet's (the player can turn it off). */
+  static planet = true;
   private kart: Kart;
   private geo;
   private remote = new RemoteKarts();
@@ -188,7 +190,7 @@ export class Race {
       cols: world.cols, rows: world.rows, ids: world.ids, atlas: world.atlas, atlasW: 512, atlasH: 256, outside: world.baseTheme * 256 + 0x44,
     } : null);
     o.sound?.course(o.track.theme);
-    if (o.royale) { this.followRegion(true); this.showWorldMap(); }
+    if (o.royale) { this.followRegion(true); this.showWorldMap(); this.applyPlanet(); }
     o.hud.note.textContent = '';
 
     if (o.net) {
@@ -397,7 +399,7 @@ export class Race {
       ];
       for (const [cpu, v] of victims) {
         if ((cpu ?? o.selfId) === e.owner && fresh) continue;
-        if (v.air > 0 || v.fall > 0 || Math.hypot(e.x - v.x, e.y - v.y) >= ITEM_HIT_DISTANCE) continue;
+        if (v.air > 0 || v.fall > 0 || near2(e, v) >= ITEM_HIT_DISTANCE) continue;
         o.channel.send({ t: 'hit', entity: e.id, cpu });
         this.entities.delete(e.id);
         if (e.kind === 'poison') { if (!isInvincible(v)) v.shrink = SHRINK_FRAMES; }
@@ -409,7 +411,7 @@ export class Race {
     // A star spins out the CPUs we touch (in a battle it pops one of their balloons).
     if (k.star > 0 && !this.out) {
       for (const c of this.cpus) {
-        if (c.out || Math.hypot(c.kart.x - k.x, c.kart.y - k.y) >= 10 || isInvincible(c.kart) || c.kart.spin > 0) continue;
+        if (c.out || near2(c.kart, k) >= 10 || isInvincible(c.kart) || c.kart.spin > 0) continue;
         if (o.royale) o.channel.send({ t: 'pop', cpu: c.id });
         spinOut(c.kart);
       }
@@ -420,7 +422,7 @@ export class Race {
     // (Our own CPUs aren't in the remote list: Mario and Luigi CPUs use stars too.)
     for (const r of [...remotes, ...this.cpus.filter((c) => !c.out).map((c) => netState(c.id, c.kart))]) {
       if (this.out) break;
-      if (r.e & EFFECT_STAR && this.starTouchCooldown === 0 && Math.hypot(r.x - k.x, r.y - k.y) < 10) {
+      if (r.e & EFFECT_STAR && this.starTouchCooldown === 0 && near2(r, k) < 10) {
         if (o.battle && !isInvincible(k)) o.channel.send({ t: 'pop' });
         spinOut(k);
         this.starTouchCooldown = 60;
@@ -558,9 +560,11 @@ export class Race {
       ...remotes.filter((r) => r.f === 0 && (this.balloons.get(r.id) ?? 1) > 0),
     ];
     const bumpers = this.bumpers(everyone.filter((r) => r.f === 0 && !(r.e & (EFFECT_GHOST | EFFECT_SHRUNK))));
-    // Rivals each bot can see: a coarse grid so 100 karts don't each look at 100 others.
-    const CELL = 512, grid = new Map<number, Rival[]>();
-    const key = (x: number, y: number) => Math.floor(x / CELL) * 1000 + Math.floor(y / CELL);
+    // Rivals each bot can see: a coarse grid so 100 karts don't each look at 100 others. (Its cells divide
+    // the world exactly, which wraps round: the cells along one edge are next to those along the other.)
+    const CELL = 608, GX = Math.round(WORLD_W / CELL), GY = Math.round(WORLD_H / CELL), grid = new Map<number, Rival[]>();
+    const cell = (v: number, n: number) => ((Math.floor(v) % n) + n) % n;
+    const key = (x: number, y: number) => cell(x / CELL, GX) * 1000 + cell(y / CELL, GY);
     for (const r of everyone) {
       if (r.e & EFFECT_GHOST) continue;
       const g = key(r.x, r.y);
@@ -571,14 +575,14 @@ export class Race {
       const out: Rival[] = [];
       const cx = Math.floor(k.x / CELL), cy = Math.floor(k.y / CELL);
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
-        for (const r of grid.get((cx + dx) * 1000 + cy + dy) ?? []) if (r.id !== id) out.push(r);
+        for (const r of grid.get(cell(cx + dx, GX) * 1000 + cell(cy + dy, GY)) ?? []) if (r.id !== id) out.push(r);
       }
       return out;
     };
     // Karts to bump into, in 64 px cells: each bot only looks at the cells round it.
-    const BCELL = 64, bgrid = new Map<number, (Bumper & { id: number })[]>();
+    const BCELL = 64, BX = Math.round(WORLD_W / BCELL), BY = Math.round(WORLD_H / BCELL), bgrid = new Map<number, (Bumper & { id: number })[]>();
     for (const b of bumpers) {
-      const g = Math.floor(b.x / BCELL) * 4096 + Math.floor(b.y / BCELL);
+      const g = cell(b.x / BCELL, BX) * 4096 + cell(b.y / BCELL, BY);
       if (!bgrid.has(g)) bgrid.set(g, []);
       bgrid.get(g)!.push(b);
     }
@@ -586,7 +590,7 @@ export class Race {
       const out: Bumper[] = [];
       const cx = Math.floor(k.x / BCELL), cy = Math.floor(k.y / BCELL);
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
-        for (const b of bgrid.get((cx + dx) * 4096 + cy + dy) ?? []) if (b.id !== id) out.push(b);
+        for (const b of bgrid.get(cell(cx + dx, BX) * 4096 + cell(cy + dy, BY)) ?? []) if (b.id !== id) out.push(b);
       }
       return out;
     };
@@ -631,14 +635,14 @@ export class Race {
       }
       // A person with a star running into this bot.
       for (const r of remotes) {
-        if (!(r.e & EFFECT_STAR) || r.f > 0 || isInvincible(k) || k.spin > 0 || Math.hypot(r.x - k.x, r.y - k.y) >= 10) continue;
+        if (!(r.e & EFFECT_STAR) || r.f > 0 || isInvincible(k) || k.spin > 0 || near2(r, k) >= 10) continue;
         o.channel.send({ t: 'pop', cpu: c.id });
         spinOut(k);
       }
       // A star: spin out and pop whoever it touches (other bots here; people check for themselves).
       if (k.star > 0) {
         for (const v of live) {
-          if (v === c || v.out || isInvincible(v.kart) || v.kart.spin > 0 || Math.hypot(v.kart.x - k.x, v.kart.y - k.y) >= 10) continue;
+          if (v === c || v.out || isInvincible(v.kart) || v.kart.spin > 0 || near2(v.kart, k) >= 10) continue;
           o.channel.send({ t: 'pop', cpu: v.id });
           spinOut(v.kart);
         }
@@ -697,6 +701,11 @@ export class Race {
     const r = this.o.renderer;
     r.mapZoom = (w.cols * TILE) / (SCREEN_W * MAP_SCALE);
     r.mapOrigin = { x: 0, y: w.rows * TILE - MAP_PX * r.mapZoom };
+  }
+
+  /** Battle Royale: the little planet's curve on or off (Race.planet). */
+  applyPlanet() {
+    if (this.o.royale) this.o.renderer.curve = Race.planet ? 1 / (2 * PLANET_RADIUS) : 0;
   }
 
   /** Battle Royale: how many drivers are still in. */
@@ -832,7 +841,7 @@ export class Race {
       // Open world: Lakitu brings the kart back to the nearest stretch of racing line, facing along it.
       let best = k.safe, bestD = Infinity;
       for (const p of this.o.royale.spawns) {
-        const d = (p.x - k.x) ** 2 + (p.y - k.y) ** 2;
+        const d = near2(p, k);
         if (d < bestD) { bestD = d; best = p; }
       }
       k.safe = { x: best.x, y: best.y, angle: best.angle };
@@ -987,6 +996,11 @@ export class Race {
     else if (this.item) icon = ITEM_KINDS.indexOf(this.item);
     if (icon !== null) hud.itemIcon(this.o.itemGfx.icons[icon]);
   }
+}
+
+/** Distance between two karts or items, the short way round (the Battle Royale world wraps round). */
+function near2(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return Math.hypot(wrapDX(a.x - b.x), wrapDY(a.y - b.y));
 }
 
 function netState(id: number, k: Kart): KartNetState {

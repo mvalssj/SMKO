@@ -1,5 +1,7 @@
-// Battle Royale checks: the world joins every course (you can drive from any course to any other), the safe
-// area always closes inside the world, and 99 bots get about without the items (distance, falls).
+// Battle Royale checks: the world joins every course (you can drive from any course to any other), it wraps
+// round (a kart driving off one edge comes in at the other; distances and the safe area go the short way
+// round), the safe area always closes inside the world, and 99 bots get about without the items (distance,
+// falls).
 // Usage: npx tsx tools/royale-test.ts "Super Mario Kart (USA).sfc" [seconds]
 import { readFileSync } from 'node:fs';
 import { SmkRom, TILE } from '../src/rom/rom';
@@ -7,7 +9,11 @@ import { buildWorld } from '../src/royale/world';
 import { RoyaleState } from '../src/royale/state';
 import { BotDriver } from '../src/royale/bot';
 import { createKart, raceGeometry, stepKart, terrainOf } from '../src/game/physics';
-import { WORLD_H, WORLD_REGIONS, WORLD_W, mulberry32, worldCourseAt, zoneCircles } from '../shared/royale';
+import {
+  MARGIN_TILES, COURSE_TILES, GAP_TILES, WORLD_H, WORLD_REGIONS, WORLD_W, insideZone, mulberry32, worldCourseAt, wrapDist,
+  zoneAt, zoneCircles,
+} from '../shared/royale';
+import { NO_INPUT } from '../src/game/physics';
 
 const rom = new SmkRom(new Uint8Array(readFileSync(process.argv[2])));
 const secs = +(process.argv[3] ?? 30);
@@ -28,8 +34,7 @@ while (queue.length) {
   const x = i % cols, y = (i - x) / cols;
   for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
     const nx = x + dx, ny = y + dy;
-    if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
-    const j = ny * cols + nx;
+    const j = ((ny + rows) % rows) * cols + ((nx + cols) % cols);
     if (!seen[j] && ok(j)) { seen[j] = 1; queue.push(j); }
   }
 }
@@ -41,7 +46,7 @@ let circlesOk = true;
 for (let seed = 1; seed <= 50; seed++) {
   const c = zoneCircles(seed);
   for (let i = 1; i < c.length; i++) {
-    const inside = Math.hypot(c[i].x - c[i - 1].x, c[i].y - c[i - 1].y) + c[i].r <= c[i - 1].r + 0.5;
+    const inside = wrapDist(c[i].x, c[i].y, c[i - 1].x, c[i - 1].y) + c[i].r <= c[i - 1].r + 0.5;
     const inWorld = c[i].x > 0 && c[i].y > 0 && c[i].x < WORLD_W && c[i].y < WORLD_H;
     if (!inside || !inWorld) circlesOk = false;
   }
@@ -55,7 +60,37 @@ for (let seed = 1; seed <= 200; seed++) {
 }
 check(deadlyEnds <= 10, `zona: o fim quase nunca cai no vazio ou na lava (${deadlyEnds} de 200 partidas)`);
 
-// 3. Bots driving about for a while.
+// 3. Round the world: a kart driving north up the road between the 3rd and 4th columns goes off the top
+// edge and comes in at the bottom, on road all the way; distances and the safe area go the short way.
+{
+  const x = (MARGIN_TILES + 2 * (COURSE_TILES + GAP_TILES) + COURSE_TILES + GAP_TILES / 2) * TILE;
+  const k = createKart(world, 0, 0, 100);
+  Object.assign(k, { x, y: 300, angle: 0 });
+  const geo0 = raceGeometry(world);
+  let fell = false, wrapped = false, prevY = k.y;
+  for (let f = 0; f < 240; f++) {
+    stepKart(k, { ...NO_INPUT, accel: true }, world, geo0, [], f);
+    if (k.fall > 0) fell = true;
+    if (k.y > prevY + WORLD_H / 2) wrapped = true;
+    prevY = k.y;
+  }
+  check(wrapped && !fell && k.y > WORLD_H - 2000 && k.y < WORLD_H && k.speed > 2,
+    `o mundo dá a volta: saiu por cima e voltou por baixo pela estrada (y = ${Math.round(k.y)}, ${k.speed.toFixed(1)} px/quadro)`);
+  const a = { x: 10, y: 10 }, b = { x: WORLD_W - 10, y: WORLD_H - 10 };
+  check(Math.abs(wrapDist(a.x, a.y, b.x, b.y) - Math.hypot(20, 20)) < 1e-6, 'distância pelo lado mais curto, atravessando a borda');
+  check(insideZone({ x: 0, y: 0, r: 100 }, WORLD_W - 30, WORLD_H - 30), 'a zona também atravessa a borda');
+  let wrapOk = true;
+  for (let seed = 1; seed <= 50; seed++) {
+    const c = zoneCircles(seed);
+    for (let t = 0; t < 600_000; t += 1000) {
+      const z = zoneAt(c, t).now;
+      if (!(z.x >= 0 && z.x < WORLD_W && z.y >= 0 && z.y < WORLD_H)) wrapOk = false;
+    }
+  }
+  check(wrapOk, 'zona encolhendo: o centro anda pelo lado mais curto e fica dentro do mundo');
+}
+
+// 4. Bots driving about for a while.
 const st = new RoyaleState(world, 777);
 const rand = mulberry32(5);
 const geo = raceGeometry(world);

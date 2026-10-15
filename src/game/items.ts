@@ -3,6 +3,7 @@
 import type { NetEntity } from '../../shared/protocol';
 import type { Track } from '../rom/rom';
 import { terrainAt } from './physics';
+import { wrapDX, wrapDY, wrapX, wrapY } from '../../shared/royale';
 
 const SHELL_SPEED = 4.6;
 /** Bowser's fireballs roll slowly and wander, then burn out. */
@@ -46,7 +47,7 @@ export function advanceEntity(e: Entity, track: Track, frame: number, targetPos:
     if (e.kind === 'redShell' && e.target !== null && age > 6) {
       const t = targetPos(e.target);
       if (t) {
-        const want = Math.atan2(t.x - e.x, -(t.y - e.y));
+        const want = Math.atan2(wrapDX(t.x - e.x), -wrapDY(t.y - e.y));
         let cur = Math.atan2(e.vx, -e.vy);
         let d = want - cur;
         d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -61,6 +62,8 @@ export function advanceEntity(e: Entity, track: Track, frame: number, targetPos:
     else e.x += e.vx;
     if (terrainAt(track, e.x, e.y + e.vy) === 'wall') e.vy = -e.vy;
     else e.y += e.vy;
+    // The Battle Royale world wraps round: off one edge, in at the other.
+    if (track.world) { e.x = wrapX(e.x); e.y = wrapY(e.y); }
     if (terrainAt(track, e.x, e.y) === 'fall') e.dead = true;
   }
 }

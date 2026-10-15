@@ -5,9 +5,11 @@
 // where that ground is void, lava or deep water, a bridge of the region's own road (planks, bricks, sand)
 // runs down the middle of the gap. Between regions, and only there, the gaps are Mario Circuit roads
 // (red-and-white kerbs, striped asphalt: tile patterns copied from Mario Circuit 1 and 2), laid like the grout
-// between tiles. Each course keeps its own tiles, terrain and objects; from every side but the world's edge a
-// way is cut from the edge of the course map straight in to its track (through the fences, the void, the
-// water...): Mario Circuit asphalt from a road, the course's own road from its region.
+// between tiles. The world has no edge: it wraps round like a little planet, the strips along its four sides
+// making the gaps between the last column (row) of courses and the first. Each course keeps its own tiles,
+// terrain and objects; from every side a way is cut from the edge of the course map straight in to its track
+// (through the fences, the void, the water...): Mario Circuit asphalt from a road, the course's own road from
+// its region.
 //
 // The floor is kept as tile numbers into an atlas of all eight themes' road tiles (8 x 256 tiles of 8x8), the
 // way the SNES builds its Mode 7 picture, so the world never needs one huge picture.
@@ -16,6 +18,7 @@ import { Genre, TILE, type AiArea, type SmkRom, type SpriteFrame, type Track, ty
 import { terrainOf } from '../game/physics';
 import {
   COURSE_TILES, GAP_TILES, GRID_COLS, GRID_ROWS, MARGIN_TILES, WORLD_COLS, WORLD_LAYOUT, WORLD_REGIONS, WORLD_ROWS, cellRegion,
+  wrapDX, wrapDY,
 } from '../../shared/royale';
 
 /** Size of one course map, the gap between maps and the strip round the world (tiles): see shared/royale.ts. */
@@ -37,8 +40,6 @@ const MC = {
   grass: 0x44,
   vertical: [[0x38, 0x01, 0x3b], [0x3c, 0x11, 0x3f]],
   horizontal: [[0x3a, 0x01, 0x39], [0x3e, 0x11, 0x3d]],
-  /** Pipe fence round the outside (the four pieces Mario Circuit's fences cycle through). */
-  fence: [0xf0, 0xf1, 0xf2, 0xf3],
 };
 /** Asphalt rows between the kerbs; a road is ROAD_W tiles wide in all. */
 const ASPHALT = 8;
@@ -121,10 +122,6 @@ export function buildWorld(rom: SmkRom): WorldTrack {
     ids[y * WORLD_COLS + x] = th * 256 + tile;
     genres[y * WORLD_COLS + x] = genreOf(th, tile);
   };
-
-  // A pipe fence round the edge.
-  for (let x = 0; x < WORLD_COLS; x++) { put(x, 0, base, MC.fence[(x >> 2) & 3]); put(x, WORLD_ROWS - 1, base, MC.fence[(x >> 2) & 3]); }
-  for (let y = 0; y < WORLD_ROWS; y++) { put(0, y, base, MC.fence[(y >> 2) & 3]); put(WORLD_COLS - 1, y, base, MC.fence[(y >> 2) & 3]); }
 
   // The courses, each in its cell of the grid.
   const regions: WorldRegion[] = [];
@@ -230,34 +227,32 @@ export function buildWorld(rom: SmkRom): WorldTrack {
     }
   };
 
-  // The gaps. A world column (or row) is either in a column of courses or in the gap after one (k = -1:
-  // the strip before the first); outside the grid counts as the nearest course's region, so the strip round
-  // the world is its region's ground. A gap whose courses all share a region is that region's ground; any
-  // other is a road: kerbs along the courses, plain asphalt where roads cross or turn.
+  // The gaps. A world column (or row) is either in a column of courses or in the gap after one; the strip
+  // before the first column is the end of the gap after the last, across the world's edge (`at`: the
+  // position counted on from the last column). A gap whose courses all share a region is that region's
+  // ground; any other is a road: kerbs along the courses, plain asphalt where roads cross or turn.
   const step = COURSE + GAP;
-  const bandOf = (v: number, cells: number) => {
-    const u = v - MARGIN;
-    if (u < 0) return { k: -1, gap: true, a: 1, z: MARGIN - 1, inner: false };
-    const k = Math.floor(u / step), off = u - k * step, a0 = MARGIN + k * step;
-    if (off < COURSE) return { k, gap: false, a: a0, z: a0 + COURSE - 1, inner: false };
-    const inner = k + 1 < cells;
-    return { k, gap: true, a: a0 + COURSE, z: a0 + COURSE + (inner ? GAP : MARGIN - 1) - 1, inner };
+  const bandOf = (v: number, total: number) => {
+    const at = v < MARGIN ? v + total : v;
+    const k = Math.floor((at - MARGIN) / step), a0 = MARGIN + k * step;
+    if (at - a0 < COURSE) return { k, at, gap: false, a: a0, z: a0 + COURSE - 1 };
+    return { k, at, gap: true, a: a0 + COURSE, z: a0 + COURSE + GAP - 1 };
   };
-  const landAt = (r: number, c: number) => cellRegion(Math.max(0, Math.min(GRID_ROWS - 1, r)), Math.max(0, Math.min(GRID_COLS - 1, c)));
+  const landAt = (r: number, c: number) => cellRegion((r + GRID_ROWS) % GRID_ROWS, (c + GRID_COLS) % GRID_COLS);
   /** A bridge is ASPHALT tiles wide, down the middle of a gap. */
   const lane0 = (GAP - ASPHALT) / 2;
-  for (let y = 1; y < WORLD_ROWS - 1; y++) {
-    const by = bandOf(y, GRID_ROWS);
-    for (let x = 1; x < WORLD_COLS - 1; x++) {
-      const bx = bandOf(x, GRID_COLS);
+  for (let y = 0; y < WORLD_ROWS; y++) {
+    const by = bandOf(y, WORLD_ROWS);
+    for (let x = 0; x < WORLD_COLS; x++) {
+      const bx = bandOf(x, WORLD_COLS);
       if (!bx.gap && !by.gap) continue; // a course
       const rowsNear = by.gap ? [by.k, by.k + 1] : [by.k], colsNear = bx.gap ? [bx.k, bx.k + 1] : [bx.k];
       const near = rowsNear.flatMap((r) => colsNear.map((c) => landAt(r, c)));
       if (near.every((l) => l === near[0])) {
         const l = lands[near[0]];
         const bridge = !l.open && (
-          (bx.inner && x - bx.a >= lane0 && x - bx.a < lane0 + ASPHALT && (!by.gap || by.inner)) ||
-          (by.inner && y - by.a >= lane0 && y - by.a < lane0 + ASPHALT && (!bx.gap || bx.inner)));
+          (bx.gap && bx.at - bx.a >= lane0 && bx.at - bx.a < lane0 + ASPHALT) ||
+          (by.gap && by.at - by.a >= lane0 && by.at - by.a < lane0 + ASPHALT));
         put(x, y, l.theme, bridge ? l.road : l.ground);
         continue;
       }
@@ -269,15 +264,15 @@ export function buildWorld(rom: SmkRom): WorldTrack {
       }
       if (across && !down) {
         const p = MC.horizontal[phase(x)];
-        put(x, y, base, y === by.a ? p[0] : y === by.z ? p[2] : p[1]);
+        put(x, y, base, by.at === by.a ? p[0] : by.at === by.z ? p[2] : p[1]);
       } else if (down && !across) {
         const p = MC.vertical[phase(y)];
-        put(x, y, base, x === bx.a ? p[0] : x === bx.z ? p[2] : p[1]);
+        put(x, y, base, bx.at === bx.a ? p[0] : bx.at === bx.z ? p[2] : p[1]);
       } else put(x, y, base, MC.horizontal[phase(x)][1]);
     }
   }
 
-  // Into each course from every side but the world's edge: a way cut straight in to its track (through the
+  // Into each course from every side: a way cut straight in to its track (through the
   // fences, the void, the water...), at the line where that is shortest. From a road it is Mario Circuit
   // asphalt, the road's kerb opened up; from its own region it is the course's own road, out to the bridge
   // when there is one, and the fences along that side come down where the region's ground is drivable.
@@ -286,8 +281,7 @@ export function buildWorld(rom: SmkRom): WorldTrack {
     const l = lands[reg.land];
     for (const side of sides) {
       const [nr, nc] = side === 'left' ? [r, c - 1] : side === 'right' ? [r, c + 1] : side === 'top' ? [r - 1, c] : [r + 1, c];
-      if (nr < 0 || nc < 0 || nr >= GRID_ROWS || nc >= GRID_COLS) continue;
-      const fromRoad = cellRegion(nr, nc) !== reg.land;
+      const fromRoad = landAt(nr, nc) !== reg.land;
       if (!fromRoad && l.open) {
         for (let d = 0; d < 3; d++) for (let a = 0; a < COURSE; a++) {
           const [x, y] = sidePoint(reg, side, d, a);
@@ -391,12 +385,13 @@ export function buildWorld(rom: SmkRom): WorldTrack {
   };
 }
 
-/** The course (or the grass nearest one) at a world position: its theme gives the sky. */
+/** The course (or the ground nearest one, either way round the world) at a position: its theme gives the sky. */
 export function regionAt(w: WorldFloor, x: number, y: number): WorldRegion {
-  const tx = x / TILE, ty = y / TILE;
   let best = w.regions[0], bestD = Infinity;
   for (const r of w.regions) {
-    const dx = Math.max(r.x0 - tx, 0, tx - (r.x0 + COURSE)), dy = Math.max(r.y0 - ty, 0, ty - (r.y0 + COURSE));
+    const half = (COURSE * TILE) / 2;
+    const dx = Math.max(0, Math.abs(wrapDX(x - (r.x0 * TILE + half))) - half) / TILE;
+    const dy = Math.max(0, Math.abs(wrapDY(y - (r.y0 * TILE + half))) - half) / TILE;
     const d = dx * dx + dy * dy;
     if (d < bestD) { bestD = d; best = r; }
   }

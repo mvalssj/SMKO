@@ -645,6 +645,21 @@ $('btn-wide').addEventListener('click', (e) => {
 });
 applyWide();
 
+// Battle Royale's little planet: the floor curving away (on unless turned off).
+Race.planet = localStorageGet('smko-flat') !== '1';
+function applyPlanet() {
+  $('btn-planet').textContent = Race.planet ? '◠ curvo' : '▬ plano';
+  $('btn-planet').title = Race.planet ? 'Battle Royale: deixar o chão plano, como no SNES' : 'Battle Royale: chão curvo como um planeta';
+  race?.applyPlanet();
+}
+$('btn-planet').addEventListener('click', (e) => {
+  Race.planet = !Race.planet;
+  try { localStorage.setItem('smko-flat', Race.planet ? '0' : '1'); } catch { /* private mode */ }
+  applyPlanet();
+  (e.currentTarget as HTMLElement).blur();
+});
+applyPlanet();
+
 // Gamepads and the touch pad (they send the keyboard's keys).
 let toastTimer = 0;
 function showToast(text: string, ms = 2500) {

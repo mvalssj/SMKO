@@ -9,7 +9,11 @@ export const ROYALE_BALLOONS = 3;
 /** Outside the safe area a balloon pops every few seconds (Lakitu shows his reverse sign meanwhile). */
 export const ZONE_POP_MS = 4000;
 
-/** World layout (tiles of 8 px): 6 x 4 course maps of 128 tiles, 24 tiles between them, 12 round. */
+/**
+ * World layout (tiles of 8 px): 6 x 4 course maps of 128 tiles, 24 tiles between them, 12 round. The world
+ * wraps round like a little planet: drive off the east edge and you come in from the west, off the south and
+ * you come in from the north; the 12 tiles at each edge make, with the other side's, one more 24-tile gap.
+ */
 export const TILE_PX = 8;
 export const COURSE_TILES = 128;
 export const GAP_TILES = 24;
@@ -20,6 +24,15 @@ export const WORLD_COLS = 2 * MARGIN_TILES + GRID_COLS * COURSE_TILES + (GRID_CO
 export const WORLD_ROWS = 2 * MARGIN_TILES + GRID_ROWS * COURSE_TILES + (GRID_ROWS - 1) * GAP_TILES;
 export const WORLD_W = WORLD_COLS * TILE_PX;
 export const WORLD_H = WORLD_ROWS * TILE_PX;
+
+/** Shortest difference between two positions across the world (it wraps round), each way. */
+export const wrapDX = (d: number) => d - WORLD_W * Math.round(d / WORLD_W);
+export const wrapDY = (d: number) => d - WORLD_H * Math.round(d / WORLD_H);
+/** A position brought back into the world (0 <= x < WORLD_W). */
+export const wrapX = (x: number) => x - WORLD_W * Math.floor(x / WORLD_W);
+export const wrapY = (y: number) => y - WORLD_H * Math.floor(y / WORLD_H);
+/** Distance between two points the short way round. (On one course, under half the world: plain distance.) */
+export const wrapDist = (ax: number, ay: number, bx: number, by: number) => Math.hypot(wrapDX(bx - ax), wrapDY(by - ay));
 
 /**
  * The world's regions: the courses of one kind of land side by side, with no road between them (their own
@@ -62,8 +75,9 @@ export function zoneAnchors(): { x: number; y: number; safe: boolean }[] {
     for (let c = 0; c < GRID_COLS; c++) {
       const x = m + c * step + half, y = m + r * step + half;
       out.push({ x, y, safe: safe([r, c]) });
-      if (c + 1 < GRID_COLS) out.push({ x: x + step / 2, y, safe: safe([r, c], [r, c + 1]) });
-      if (r + 1 < GRID_ROWS) out.push({ x, y: y + step / 2, safe: safe([r, c], [r + 1, c]) });
+      // (The gaps after the last column and row are the ones across the world's edge.)
+      out.push({ x: wrapX(x + step / 2), y, safe: safe([r, c], [r, (c + 1) % GRID_COLS]) });
+      out.push({ x, y: wrapY(y + step / 2), safe: safe([r, c], [(r + 1) % GRID_ROWS, c]) });
     }
   }
   return out;
@@ -95,13 +109,14 @@ export interface ZoneNow {
 export function zoneCircles(seed: number): Circle[] {
   const rand = mulberry32(seed);
   const anchors = zoneAnchors();
+  // The first covers everything (nowhere is further than half the world each way).
   const first: Circle = { x: WORLD_W / 2, y: WORLD_H / 2, r: Math.hypot(WORLD_W, WORLD_H) / 2 + 64 };
   const circles = [first];
   let prev = first;
   for (const p of PHASES) {
     // The next circle lies wholly inside the current one, centred on a course or a gap; the small ones keep
     // off the void and the lava when they can.
-    let fits = anchors.filter((a) => Math.hypot(a.x - prev.x, a.y - prev.y) + p.r <= prev.r);
+    let fits = anchors.filter((a) => wrapDist(a.x, a.y, prev.x, prev.y) + p.r <= prev.r);
     if (p.r <= 1000 && fits.some((a) => a.safe)) fits = fits.filter((a) => a.safe);
     const pick = fits.length ? fits[Math.floor(rand() * fits.length)] : prev;
     prev = { x: pick.x, y: pick.y, r: p.r };
@@ -119,7 +134,9 @@ export function zoneAt(circles: Circle[], ms: number, scale = 1): ZoneNow {
     t -= p.wait;
     if (t < p.shrink) {
       const u = t / p.shrink;
-      return { now: { x: from.x + (to.x - from.x) * u, y: from.y + (to.y - from.y) * u, r: from.r + (to.r - from.r) * u }, next: to, phase: i, shrinking: true };
+      // Moving the short way round.
+      const x = wrapX(from.x + wrapDX(to.x - from.x) * u), y = wrapY(from.y + wrapDY(to.y - from.y) * u);
+      return { now: { x, y, r: from.r + (to.r - from.r) * u }, next: to, phase: i, shrinking: true };
     }
     t -= p.shrink;
   }
@@ -130,14 +147,14 @@ export function zoneAt(circles: Circle[], ms: number, scale = 1): ZoneNow {
 /** Which course (index into COURSE_NAMES, shared/names.ts) is at a world position; -1 on the roads. */
 export function worldCourseAt(x: number, y: number): number {
   const step = COURSE_TILES + GAP_TILES;
-  const tx = x / TILE_PX - MARGIN_TILES, ty = y / TILE_PX - MARGIN_TILES;
+  const tx = wrapX(x) / TILE_PX - MARGIN_TILES, ty = wrapY(y) / TILE_PX - MARGIN_TILES;
   const c = Math.floor(tx / step), r = Math.floor(ty / step);
   if (c < 0 || r < 0 || c >= GRID_COLS || r >= GRID_ROWS || tx - c * step >= COURSE_TILES || ty - r * step >= COURSE_TILES) return -1;
   return WORLD_LAYOUT[r][c];
 }
 
 export function insideZone(z: Circle, x: number, y: number): boolean {
-  return Math.hypot(x - z.x, y - z.y) <= z.r;
+  return wrapDist(x, y, z.x, z.y) <= z.r;
 }
 
 type Send = (to: number | 'all', msg: ServerMsg) => void;

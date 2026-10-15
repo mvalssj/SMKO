@@ -4,6 +4,7 @@
 // character class. The game's speed unit is 1/256 px per frame; here speeds are in px per frame.
 
 import { Genre, MAP_PX, MAP_SIZE, TILE, aiAreaContains, type Track } from '../rom/rom';
+import { wrapDX, wrapDY } from '../../shared/royale';
 import { OBJECT_HIT_DISTANCE, objectState } from './objects';
 
 export const STEP_MS = 1000 / 60;
@@ -181,16 +182,30 @@ export const floorCols = (t: Track) => t.world?.cols ?? MAP_SIZE;
 export const floorRows = (t: Track) => t.world?.rows ?? MAP_SIZE;
 
 export function terrainAt(track: Track, x: number, y: number): Terrain {
-  const cols = floorCols(track);
-  if (x < 0 || y < 0 || x >= cols * TILE || y >= floorRows(track) * TILE) return 'wall';
-  return terrainOf(track.genres[Math.floor(y / TILE) * cols + Math.floor(x / TILE)]);
+  if (!track.world && (x < 0 || y < 0 || x >= floorCols(track) * TILE || y >= floorRows(track) * TILE)) return 'wall';
+  return terrainOf(genreAt(track, x, y));
 }
 
-/** Genre of the tile under a world position (0 outside the floor). */
+/**
+ * Genre of the tile under a position (0 outside a course); the Battle Royale world
+ * wraps round (off one edge is the other side).
+ */
 export function genreAt(track: Track, x: number, y: number): number {
-  const cols = floorCols(track), tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
-  if (tx < 0 || ty < 0 || tx >= cols || ty >= floorRows(track)) return 0;
+  const cols = floorCols(track), rows = floorRows(track);
+  let tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
+  if (track.world) {
+    tx -= cols * Math.floor(tx / cols);
+    ty -= rows * Math.floor(ty / rows);
+  } else if (tx < 0 || ty < 0 || tx >= cols || ty >= rows) return 0;
   return track.genres[ty * cols + tx];
+}
+
+/** Brings a kart that drove off the world's edge back in on the other side (Battle Royale). */
+function wrapKart(k: Kart, track: Track) {
+  if (!track.world) return;
+  const w = floorCols(track) * TILE, h = floorRows(track) * TILE;
+  k.x -= w * Math.floor(k.x / w);
+  k.y -= h * Math.floor(k.y / h);
 }
 
 /** Copies tile `src` over tile `dst` (terrain and picture). */
@@ -430,8 +445,14 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
 
   if (airborne) {
     // Ballistic: keep the take-off velocity, ignore walls and holes until landing.
-    k.x = Math.min(floorCols(track) * TILE - 1, Math.max(0, k.x + k.vx));
-    k.y = Math.min(floorRows(track) * TILE - 1, Math.max(0, k.y + k.vy));
+    if (track.world) {
+      k.x += k.vx;
+      k.y += k.vy;
+      wrapKart(k, track);
+    } else {
+      k.x = Math.min(floorCols(track) * TILE - 1, Math.max(0, k.x + k.vx));
+      k.y = Math.min(floorRows(track) * TILE - 1, Math.max(0, k.y + k.vy));
+    }
     k.air--;
     // Never land inside a wall: stay up a bit longer.
     if (k.air === 0 && terrainAt(track, k.x, k.y) === 'wall') k.air = 1;
@@ -482,8 +503,11 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   // Move with per-axis wall collision so karts slide along walls. Breakable blocks shatter instead.
   const blocked = (x: number, y: number) => {
     if (terrainAt(track, x, y) !== 'wall') return false;
-    const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
-    if (!BREAKABLE.includes(track.genres[ty * floorCols(track) + tx]) || Math.abs(k.speed) < 0.8) return true;
+    const cols = floorCols(track), rows = floorRows(track);
+    let tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
+    if (track.world) { tx -= cols * Math.floor(tx / cols); ty -= rows * Math.floor(ty / rows); }
+    if (tx < 0 || ty < 0 || tx >= cols || ty >= rows) return true;
+    if (!BREAKABLE.includes(track.genres[ty * cols + tx]) || Math.abs(k.speed) < 0.8) return true;
     events.broken.push(...breakBlocks(track, tx, ty));
     k.speed *= 0.5;
     return false;
@@ -499,7 +523,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
 
   // Bump into other karts: the lighter kart takes most of the push (both sides move, each in its own simulation).
   for (const o of others) {
-    const dx = k.x - o.x, dy = k.y - o.y;
+    const dx = wrapDX(k.x - o.x), dy = wrapDY(k.y - o.y);
     const d = Math.hypot(dx, dy);
     if (d > 0 && d < KART_RADIUS * 2) {
       const mine = cls.weight, theirs = o.w ?? 2;
@@ -513,7 +537,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   // Track objects.
   for (let i = 0; i < track.objects.length; i++) {
     const o = track.objects[i];
-    const dx = k.x - o.x, dy = k.y - o.y;
+    const dx = wrapDX(k.x - o.x), dy = wrapDY(k.y - o.y);
     if (dx > OBJECT_HIT_DISTANCE || dx < -OBJECT_HIT_DISTANCE || dy > OBJECT_HIT_DISTANCE || dy < -OBJECT_HIT_DISTANCE) continue;
     const d = Math.hypot(dx, dy);
     if (d >= OBJECT_HIT_DISTANCE) continue;
@@ -533,6 +557,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     }
   }
 
+  wrapKart(k, track);
   const now = terrainAt(track, k.x, k.y);
   if (now === 'fall' && here !== 'fall' && k.speed >= 2) {
     // Driving off an edge at speed carries the kart forward through the air for a moment
