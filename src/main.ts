@@ -264,20 +264,15 @@ function resultsBoard(results: { id: number; timeMs: number | null }[], round: n
   };
 }
 
-/** Battle Royale end flow: Top 10 survivors, original-style podium, then a fresh driver choice. */
+/** Battle Royale end flow: original-style RESULTS board (the eight visible places), podium, then a fresh driver choice. */
 function showRoyaleResults(order: { id: number; place: number; timeMs: number }[]) {
-  const top = order.slice(0, 10);
-  // The original RESULTS screen has room for eight lines. Keep its authentic layout and page 9–10.
-  const pages: Board[] = [];
-  for (let at = 0; at < top.length; at += 8) {
-    const page = top.slice(at, at + 8);
-    pages.push({
-      kind: 'results', cc: 100, cup: -1, round: at / 8 + 1,
-      rows: page.map((r) => ({ character: characterOf(r.id), timeMs: r.timeMs, place: r.place, self: r.id === selfOrSolo() })),
-    });
-  }
+  const top = order.slice(0, 8);
+  const board: Board = {
+    kind: 'results', battle: true, cc: 100, cup: -1, round: 1,
+    rows: top.map((r) => ({ character: characterOf(r.id), timeMs: r.timeMs, place: r.place, self: r.id === selfOrSolo() })),
+  };
   const podium = top.slice(0, 3).map((r) => characterOf(r.id));
-  playBoards(pages, 'Enter: próximo ranking', () => showCeremony(podium, characterOf(selfOrSolo()), () => {
+  playBoards([board], 'Enter: ver o pódio', () => showCeremony(podium, characterOf(selfOrSolo()), () => {
     royaleOn = false;
     net?.close();
     net = null;
@@ -664,8 +659,8 @@ $('btn-fullscreen').addEventListener('click', () => {
     .catch(() => {});
 });
 
-// Widescreen: the race picture grows to 348x224 (16:9 with the SNES's 8:7 pixels, nothing stretched: more of
-// the course shows at the sides, the HUD stays where it was). The menus and boards stay 4:3.
+// Widescreen: the race grows to 348x224 (more course at the sides). Menus, boards and ceremony use the same
+// 16:9 stage so changing this option is consistent throughout the game.
 const WIDE_W = 348;
 let wide = localStorageGet('smko-wide') === '1';
 function raceWidth() { return wide ? WIDE_W : SCREEN_W; }

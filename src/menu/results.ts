@@ -54,6 +54,8 @@ export interface BoardRow {
 
 export interface Board {
   kind: 'results' | 'standings';
+  /** Battle Royale uses the original RESULTS layout without GP cup/round metadata. */
+  battle?: boolean;
   cc: number;
   cup: number;
   round: number;
@@ -90,9 +92,11 @@ export class ResultsBoards {
     s.oam = createOam();
     // Name base 0x8000, second table at 0xA000 (the cup icons).
     s.obsel = 0x02;
-    // Three cup icons each side of the title.
-    const icon = CUP_ICONS[b.cup] ?? CUP_ICONS[0];
-    [48, 64, 80, 168, 184, 200].forEach((x, i) => setSprite(s.oam!, i, x, 24, icon, 5, 2, true));
+    // Three cup icons each side of the title. Battle Royale has no GP cup icon in the original.
+    if (!b.battle) {
+      const icon = CUP_ICONS[b.cup] ?? CUP_ICONS[0];
+      [48, 64, 80, 168, 184, 200].forEach((x, i) => setSprite(s.oam!, i, x, 24, icon, 5, 2, true));
+    }
     return s;
   }
 
@@ -134,16 +138,22 @@ export class ResultsBoards {
       this.put(s, 20 - title.length + i, 3, top | (titlePal << 10) | PRI);
       this.put(s, 20 - title.length + i, 4, (ch === 'L' ? 0x57 : top + 1) | (titlePal << 10) | PRI);
     });
-    // Rules around "50cc  MUSHROOM CUP  ROUND 1".
+    // The original GP board has cup/round metadata; Battle Royale keeps the same RESULTS presentation
+    // but uses a clean BATTLE MODE strip rather than a fake cup icon or "ROUND 1".
     for (let c = 2; c < 30; c++) {
       this.put(s, c, 6, T_RULE | (pal << 10) | PRI);
       this.put(s, c, 8, T_RULE | (pal << 10) | PRI);
     }
-    this.write(s, 3, 7, `${b.cc}`, pal);
-    this.put(s, 3 + `${b.cc}`.length, 7, T_CC | (pal << 10) | PRI);
-    this.write(s, 8, 7, CUP_NAMES[b.cup] ?? 'BATTLE MODE', pal);
-    this.write(s, 22, 7, 'ROUND', pal);
-    this.write(s, 28, 7, `${b.round}`, pal);
+    if (b.battle) {
+      this.write(s, 10, 7, 'BATTLE MODE', pal);
+      this.write(s, 23, 7, 'TOP 8', pal);
+    } else {
+      this.write(s, 3, 7, `${b.cc}`, pal);
+      this.put(s, 3 + `${b.cc}`.length, 7, T_CC | (pal << 10) | PRI);
+      this.write(s, 8, 7, CUP_NAMES[b.cup] ?? 'BATTLE MODE', pal);
+      this.write(s, 22, 7, 'ROUND', pal);
+      this.write(s, 28, 7, `${b.round}`, pal);
+    }
 
     b.rows.slice(0, 8).forEach((row, i) => {
       const r = 10 + i * 2;
