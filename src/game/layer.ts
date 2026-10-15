@@ -15,6 +15,8 @@ export class Layer {
    * the original's positions in the middle 256 columns.
    */
   ox = 0;
+  /** Vertical offset added to everything drawn (the race view without the map sits lower, see Renderer). */
+  oy = 0;
   /** Optional clip rectangle (rows), e.g. the race view or the map. */
   private clip = { y0: 0, y1: H };
 
@@ -46,6 +48,7 @@ export class Layer {
 
   private put(x: number, y: number, c: Rgb, alpha = 1) {
     x += this.ox;
+    y += this.oy;
     if (x < 0 || x >= this.w || y < this.clip.y0 || y >= this.clip.y1) return;
     const p = (y * this.w + x) * 4;
     if (alpha >= 1) {

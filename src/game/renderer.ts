@@ -25,6 +25,14 @@ export const FOCAL = ((102 - HORIZON) * CHASE_DISTANCE) / CAM_HEIGHT;
  */
 export const PLANET_RADIUS = 7000;
 
+/**
+ * Without the course map (the player hid it, key M): the race view fills the whole picture. The sky band and
+ * the HUD move `shift` lines down and the camera goes up to `camHeight` (same distance behind the kart, same
+ * scale, so every sprite stays 1:1): the kart's wheels come near the bottom, as on the original's top screen,
+ * the floor under them about as magnified as there, and more of the course shows ahead.
+ */
+export const FULL_VIEW = { shift: 32, camHeight: 38 };
+
 /** Course map (lower screen): the course leans away, so the far edge is narrower. */
 export const MAP_TILT = 0.7;
 /** World pixels per screen pixel on the nearest map line. */
@@ -144,8 +152,14 @@ vec3 floorAt(vec2 w) {
 vec3 floorMapAt(vec2 w) { return floorAt(w); }
 float zoneDistance(vec2 w) { return distance(w, uZone.xy); }`;
 
-/** Fragment shader for a picture `w` pixels wide (the view widens, the scale stays the original's). */
-const frag = (w: number, world: WorldShape | null = null) => `
+/**
+ * Fragment shader for a picture `w` pixels wide (the view widens, the scale stays the original's); `full`:
+ * the course map hidden, the view filling the picture (FULL_VIEW).
+ */
+const frag = (w: number, world: WorldShape | null = null, full = false) => {
+  const shift = full ? FULL_VIEW.shift : 0, camHeight = full ? FULL_VIEW.camHeight : CAM_HEIGHT;
+  const HORIZON_AT = HORIZON + shift, SKY_FROM = full ? 0 : SKY_TOP, VIEW_TO = full ? SCREEN_H : VIEW_BOTTOM;
+  return `
 precision highp float;
 uniform sampler2D uMap;
 uniform sampler2D uFill;
@@ -174,19 +188,19 @@ void main() {
   vec3 c = vec3(0.0);
   // Race view (Mode 7): one floor line per screen line, z ahead. On the little planet (uCurve = 1 / 2R) a
   // point z ahead is z * z * uCurve below the flat floor; past the planet's horizon there is only sky.
-  float dy = sy - ${HORIZON}.0 + 1.0;
-  float z = ${CAM_HEIGHT}.0 * uFocal / dy;
-  bool ground = sy >= ${HORIZON}.0 && sy < ${VIEW_BOTTOM}.0;
+  float dy = sy - ${HORIZON_AT}.0 + 1.0;
+  float z = ${camHeight}.0 * uFocal / dy;
+  bool ground = sy >= ${HORIZON_AT}.0 && sy < ${VIEW_TO}.0;
   if (ground && uCurve > 0.0) {
-    float q = dy / uFocal, disc = q * q - 4.0 * uCurve * ${CAM_HEIGHT}.0;
+    float q = dy / uFocal, disc = q * q - 4.0 * uCurve * ${camHeight}.0;
     if (disc < 0.0) ground = false;
     else z = (q - sqrt(disc)) / (2.0 * uCurve);
   }
-  if (sy >= ${SKY_TOP}.0 && !ground && sy < ${VIEW_BOTTOM}.0) {
+  if (sy >= ${SKY_FROM}.0 && !ground && sy < ${VIEW_TO}.0) {
     // Sky band: the two scenery layers, bottom row on the last line above the road (uSkyDrop lines lower on
     // the little planet). Each wraps once per turn.
     c = uSky;
-    float by = sy - (${HORIZON}.0 + uSkyDrop - ${BG_HEIGHT}.0);
+    float by = sy - (${HORIZON_AT}.0 + uSkyDrop - ${BG_HEIGHT}.0);
     if (by >= 0.0) {
       float v = (by + 0.5) / ${BG_HEIGHT}.0;
       vec4 back = texture2D(uBgBack, vec2(fract((sx - ${(w - SCREEN_W) >> 1}.0 + uBgScroll.y + 0.5) / ${BG_BACK_W}.0), v));
@@ -200,7 +214,7 @@ void main() {
     vec2 right = vec2(cos(uAngle), sin(uAngle));
     vec2 wp = uCam + fwd * z + right * lateral;
     c = zoned(floorAt(wp), wp);
-  } else if (sy >= ${MAP_TOP}.0 && sy < ${MAP_BOTTOM}.0) {
+  } else if (${full ? 'false' : 'true'} && sy >= ${MAP_TOP}.0 && sy < ${MAP_BOTTOM}.0) {
     // Course map: north up, leaning away from the viewer.
     float t = (sy - ${MAP_TOP}.0 + 0.5) / ${MAP_BOTTOM - MAP_TOP}.0;
     float wy = ${MAP_PX}.0 * uMapZoom * t * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
@@ -211,6 +225,7 @@ void main() {
   gl_FragColor = vec4(c, 1.0);
 }
 `;
+};
 
 const UNIFORMS = ['uMap', 'uFill', 'uBgFront', 'uBgBack', 'uCam', 'uAngle', 'uFocal', 'uSky', 'uBgScroll', 'uMapOrigin', 'uMapZoom', 'uZone', 'uCurve', 'uSkyDrop'];
 
@@ -257,6 +272,8 @@ export class Renderer {
   zone: { x: number; y: number; r: number } | null = null;
   /** The planet's curve, 1 / (2 R) (0 = flat, as on the SNES). */
   curve = 0;
+  /** The course map hidden: the race view fills the picture (setFullView). */
+  private fullView = false;
 
   constructor(private floorCanvas: HTMLCanvasElement, private overlayCanvas: HTMLCanvasElement, private gfx: RaceGfx | null, private placeCanvas?: HTMLCanvasElement, width = SCREEN_W) {
     this.placeFx = placeCanvas?.getContext('2d') ?? null;
@@ -294,12 +311,19 @@ export class Renderer {
 
     const gl = this.gl;
     if (this.prog) gl.deleteProgram(this.prog);
-    this.prog = link(gl, VERT, frag(width, this.world));
+    this.prog = link(gl, VERT, frag(width, this.world, this.fullView));
     gl.useProgram(this.prog);
     for (const name of UNIFORMS) this.uniforms[name] = gl.getUniformLocation(this.prog, name);
     const loc = gl.getAttribLocation(this.prog, 'aPos');
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  }
+
+  /** Shows or hides the course map (lower screen); hidden, the race view fills the picture. */
+  setFullView(on: boolean) {
+    if (on === this.fullView) return;
+    this.fullView = on;
+    this.setWidth(this.width, true);
   }
 
   /** Loads a track and the driver frames (already colored with its palettes) for the characters in the race. */
@@ -400,7 +424,8 @@ export class Renderer {
     gl.uniform3f(u.uZone, this.zone?.x ?? 0, this.zone?.y ?? 0, this.zone ? this.zone.r : -1);
     gl.uniform1f(u.uCurve, this.curve);
     // Lines of sky below the old horizon: the last line where the floor can't be seen any more.
-    gl.uniform1f(u.uSkyDrop, this.curve > 0 ? Math.max(0, Math.ceil(FOCAL * Math.sqrt(4 * this.curve * CAM_HEIGHT)) - 1) : 0);
+    const camHeight = this.fullView ? FULL_VIEW.camHeight : CAM_HEIGHT;
+    gl.uniform1f(u.uSkyDrop, this.curve > 0 ? Math.max(0, Math.ceil(FOCAL * Math.sqrt(4 * this.curve * camHeight)) - 1) : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     const layer = this.layer;
@@ -408,31 +433,37 @@ export class Renderer {
     this.tick++;
     layer.clear();
     layer.ox = 0;
-    layer.setClip(HORIZON, VIEW_BOTTOM);
+    const shift = this.fullView ? FULL_VIEW.shift : 0;
+    layer.oy = shift;
+    layer.setClip(HORIZON + shift, this.fullView ? SCREEN_H : VIEW_BOTTOM);
     const world = this.world && { w: this.world.cols * 8, h: this.world.rows * 8 };
     drawRaceView(layer, cam, sprites, objects, {
-      drivers: this.drivers, objectFrames: this.objectFrames, objectSizes: this.objectSizes, itemFrames: this.itemFrames, world, curve: this.curve,
+      drivers: this.drivers, objectFrames: this.objectFrames, objectSizes: this.objectSizes, itemFrames: this.itemFrames, world, curve: this.curve, camHeight,
     }, this.tick);
     layer.setClip(MAP_TOP, MAP_BOTTOM);
     // The course map is centred in the picture, the HUD in the original's 256 columns.
     layer.ox = this.pad;
-    for (const m of markers) {
+    for (const m of this.fullView ? [] : markers) {
       // (In the world, wherever the kart is counted, brought back into the world.)
       const mx = world ? m.x - world.w * Math.floor(m.x / world.w) : m.x, my = world ? m.y - world.h * Math.floor(m.y / world.h) : m.y;
       const p = mapPoint(mx - this.mapOrigin.x, my - this.mapOrigin.y, this.mapZoom);
       if (p && (p.x < -8 || p.x > SCREEN_W + 8)) continue;
       if (p) this.hud!.head(m.character, p.x, p.y, m.palette, m.small);
     }
-    layer.setClip();
+    // The HUD moves down with the race view. (Its top lines, hidden on the original's black lines 0-2, stay
+    // hidden over the sky.)
+    layer.setClip(shift ? SKY_TOP + shift : 0);
+    layer.oy = shift;
     this.hud!.placeShow = null;
     hud(this.hud!);
+    layer.oy = 0;
     this.image.data.set(layer.px);
     this.overlay.putImageData(this.image, 0, 0);
     if (this.placeFx && this.gfx) {
       this.placeImage.data.fill(0);
       const p = this.hud!.placeShow as PlaceShow | null;
       if (p) placeMask(this.gfx.place, p.n, (x, y) => {
-        const q = (y * this.width + x + this.pad) * 4;
+        const q = ((y + shift) * this.width + x + this.pad) * 4;
         this.placeImage.data.set([p.add[0], p.add[1], p.add[2], 255], q);
       });
       this.placeFx.putImageData(this.placeImage, 0, 0);
@@ -451,20 +482,22 @@ export interface SpriteSet {
   world?: { w: number; h: number } | null;
   /** The planet's curve, 1 / (2 R) (0 = flat). */
   curve?: number;
+  /** Camera height (higher with the course map hidden: FULL_VIEW). */
+  camHeight?: number;
 }
 
 /** Drivers, track objects and items of the race view, far to near, at the SNES resolution. */
 export function drawRaceView(layer: Layer, cam: Camera, sprites: Sprite[], objects: ObjectSprite[], set: SpriteSet, tick: number) {
   const fx = Math.sin(cam.angle), fy = -Math.cos(cam.angle);
   const rx = Math.cos(cam.angle), ry = Math.sin(cam.angle);
-  const w = set.world, curve = set.curve ?? 0;
+  const w = set.world, curve = set.curve ?? 0, camHeight = set.camHeight ?? CAM_HEIGHT;
   const project = <T extends { x: number; y: number }>(s: T) => {
     let dx = s.x - cam.x, dy = s.y - cam.y;
     if (w) { dx -= w.w * Math.round(dx / w.w); dy -= w.h * Math.round(dy / w.h); }
     return { s, dx, dy, z: dx * fx + dy * fy, lat: dx * rx + dy * ry };
   };
   // On the little planet nothing shows past its horizon (sqrt(2 R h) ahead).
-  const far = curve > 0 ? Math.min(900, Math.sqrt(CAM_HEIGHT / curve)) : 900;
+  const far = curve > 0 ? Math.min(900, Math.sqrt(camHeight / curve)) : 900;
   type Item = ReturnType<typeof project<Sprite>> | (ReturnType<typeof project<ObjectSprite>> & { object: true });
   const items: Item[] = [
     ...sprites.map(project),
@@ -476,7 +509,7 @@ export function drawRaceView(layer: Layer, cam: Camera, sprites: Sprite[], objec
     const k = FOCAL / item.z; // screen px per world px
     const sx = layer.w / 2 + item.lat * k;
     // (Further down the curve on the little planet: z * z * curve below the flat floor.)
-    const ground = HORIZON + ((CAM_HEIGHT + item.z * item.z * curve) * FOCAL) / item.z;
+    const ground = HORIZON + ((camHeight + item.z * item.z * curve) * FOCAL) / item.z;
     if ('object' in item) {
       const o = item.s;
       const frames = o.item ? set.itemFrames : o.frames ?? set.objectFrames;

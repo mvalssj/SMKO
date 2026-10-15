@@ -89,6 +89,8 @@ O controle (gamepad) segue as posições do SNES: o botão de baixo é o B, o da
 
 **Celular e tablet:** em telas de toque aparece um controle do SNES na tela. Dá para deslizar o dedo de um botão para outro, como do B para o A. Em pé (retrato), o jogo fica em cima e os botões embaixo. Deitado (paisagem), os botões ficam semitransparentes sobre os cantos. O botão "tela cheia" também tenta virar a tela para paisagem.
 
+**Sem o mapa:** a tecla **M** (ou o Select do controle, ou o botão "▤ sem mapa" no canto) esconde o mapa de baixo e a corrida ocupa a tela toda. A escala é a mesma, então os sprites continuam 1:1: o céu e o HUD descem 32 linhas e a câmera sobe um pouco (de 20 para 38), o que deixa o kart perto da base da tela, como no original, e mostra mais da pista à frente. Aperte M de novo para o mapa voltar. A escolha fica salva no navegador. O som passou para a tecla **N**.
+
 **Tela larga (16:9):** o botão "▭ 16:9" no canto aumenta a imagem da corrida de 256 para 348 colunas, mantendo os pixels 8:7 do SNES. A imagem não é esticada: aparece mais pista dos lados, e o HUD e o mapa continuam nas posições originais. Os menus e os quadros de resultado continuam em 4:3. A escolha fica salva no navegador.
 
 ## Estrutura
@@ -271,7 +273,7 @@ como reserva:
   hop (17 quadros), mini-turbo e largada turbo (janela de 8 quadros ao acender a 1ª luz). 1 unidade = 1/256 px/quadro.
 - **Som**: o driver de som do próprio jogo (código SPC700 e amostras da ROM, lista de envio em $82:8000; músicas
   por tema carregadas em $D000) roda num emulador de SPC700 + DSP escrito aqui (`src/audio`), num AudioWorklet.
-  Portas: 0 = música, 1 = efeitos, 2/3 = motor. Tecla M liga/desliga.
+  Portas: 0 = música, 1 = efeitos, 2/3 = motor. Tecla N liga/desliga.
 - **Chegada e resultados**: número grande da posição (tabela de janelas HDMA, bloco 0x5E760, soma de cor), lista de
   chegada, quadro LAP TIME, telas RESULTS/STANDINGS remontadas da ROM, cerimônia de pódio (aproximada) e vidas no GP solo.
 - **Battle Mode online**: 3 balões por jogador (gráficos da ROM); o servidor estoura e decide o vencedor.
