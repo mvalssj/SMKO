@@ -466,34 +466,43 @@ export class MenuApp {
     s.layers[1].h = Math.floor(this.frame * 2 / 3) & 255; // LED sign
     const lobby = this.lobby;
     const others = lobby ? lobby.players.filter((p) => p.id !== lobby.selfId) : [];
-    const myNumber = lobby ? lobby.players.findIndex((p) => p.id === lobby.selfId) + 1 : 1;
     const blinkOn = (this.frame >> 3) % 2 === 0;
+    const labels = lobby?.players.map((p, i) => {
+      const mine = p.id === lobby.selfId;
+      return {
+        player: i + 1,
+        tv: TV_CHARACTERS.indexOf(mine ? TV_CHARACTERS[st.tv] : p.ready ? p.character : p.cursor),
+        show: (mine ? st.ok : p.ready) || blinkOn,
+      };
+    }) ?? [];
     for (let tv = 0; tv < 8; tv++) {
-      // The ROM's "1P" marker is used when this player is 1P; others get their number as sprite text below.
-      tvMarker(s, tv, myNumber === 1 && tv === st.tv && (!st.online || blinkOn || st.ok));
+      tvMarker(s, tv, st.online ? null : tv === st.tv && (!st.online || blinkOn || st.ok) ? 1 : null);
       tvChosen(s, tv, (st.ok && tv === st.tv) || others.some((p) => p.ready && TV_CHARACTERS.indexOf(p.character) === tv));
     }
     okPrompt(s, st.ok);
     s.oam = createOam();
     if (lobby) {
-      // Every player's cursor ("2P".."8P"): blinking while choosing, steady once confirmed.
-      const tags: { tv: number; text: string; pal: number; show: boolean }[] = [];
-      lobby.players.forEach((p, n) => {
-        const mine = p.id === lobby.selfId;
-        if (mine && myNumber === 1) return;
-        const tv = TV_CHARACTERS.indexOf(mine ? TV_CHARACTERS[st.tv] : p.ready ? p.character : p.cursor);
-        const confirmed = mine ? st.ok : p.ready;
-        tags.push({ tv, text: `${n + 1}P`, pal: 5, show: confirmed || blinkOn });
-      });
+      // 1P/2P use their real ROM BG tiles. Extra online players use an
+      // extension in the same framed position/palette; only colliding cursors
+      // fall back to small OAM text because a TV has one marker slot.
+      const occupied = new Set<number>();
+      const overlaps: typeof labels = [];
+      for (const label of labels) {
+        if (!label.show) continue;
+        if (occupied.has(label.tv)) overlaps.push(label);
+        else {
+          tvMarker(s, label.tv, label.player);
+          occupied.add(label.tv);
+        }
+      }
       let slot = 0;
       const perTv = new Map<number, number>();
-      for (const t of tags) {
+      for (const t of overlaps) {
         const k = perTv.get(t.tv) ?? 0;
         perTv.set(t.tv, k + 1);
-        if (!t.show) continue;
         const { x, y } = TV_SPRITE_POS[t.tv];
         // Several players on one TV: side by side, then a second row above.
-        slot = spriteText(s.oam!, slot, x + 8 + (k % 3) * 16 - Math.floor(k / 3) * 8, y - 16 - Math.floor(k / 3) * 9, t.text, t.pal, 3);
+        slot = spriteText(s.oam!, slot, x + 8 + (k % 3) * 16 - Math.floor(k / 3) * 8, y - 16 - Math.floor(k / 3) * 9, `${t.player}P`, 5, 3);
       }
       spriteText(s.oam!, slot, 16, 200, `ROOM ${lobby.code}  ${this.readyLine()}`, 5, 3);
     }

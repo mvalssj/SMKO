@@ -62,3 +62,23 @@ const lobby = (isHost: boolean, myReady = false) => ({
 app.enterLobby(lobby(false)); shot('lobby-selecao', 8);
 press('b'); press('b'); shot('lobby-aguardando-anfitriao');
 app.updateLobby(lobby(true, true)); shot('lobby-virou-anfitriao-copas');
+
+// Eight-player extension: 1P/2P are the original ROM tiles; 3P..8P use the
+// same framed marker so multiplayer labels do not fall back to mismatched text.
+app.enterLobby({
+  code: 'AB3CD', isHost: false, selfId: 2, status: '',
+  players: Array.from({ length: 8 }, (_, i) => ({
+    id: i + 1, character: i, cursor: i, ready: i !== 1, name: `P${i + 1}`,
+  })),
+});
+a.state.ok = true;
+shot('lobby-8p-marcadores', 1);
+const marker = (tv: number) => {
+  const col = 6 + (tv % 4) * 6, row = 8 + Math.floor(tv / 4) * 8;
+  const at = 0x4800 + (row * 32 + col) * 2;
+  return [a.select.vram[at] | (a.select.vram[at + 1] << 8), a.select.vram[at + 2] | (a.select.vram[at + 3] << 8)];
+};
+for (const [tv, expected] of [[0, 0x1815], [4, 0x1817], [2, 0x1850], [1, 0x1851], [6, 0x1852], [3, 0x1853], [7, 0x1854], [5, 0x1855]] as const) {
+  if (marker(tv)[0] !== expected) throw new Error(`marcador ${tv}: esperado ${expected.toString(16)}, recebido ${marker(tv)[0].toString(16)}`);
+}
+console.log('marcadores 1P..8P: OK');

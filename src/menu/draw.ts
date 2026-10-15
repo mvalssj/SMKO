@@ -130,11 +130,49 @@ export const TV_CHARACTERS = [0, 3, 2, 5, 1, 7, 4, 6];
 /** Top-left of each TV's 32x32 driver sprite. */
 export const TV_SPRITE_POS = TV_CHARACTERS.map((_, i) => ({ x: 40 + (i % 4) * 48, y: 80 + Math.floor(i / 4) * 64 }));
 
-/** Puts the "1P" marker (or the empty box) above a TV. */
-export function tvMarker(s: Screen, tv: number, on: boolean) {
+/**
+ * Puts the player marker above a TV. The original 1P and 2P labels are actual
+ * character-select BG tiles from the ROM (15/16 and 17/18 respectively), not
+ * menu-font sprites. SMK only ever needs those two labels, so 3P..8P extend
+ * that same framed marker with tiles generated in the unused part of the
+ * character-select BG set.
+ */
+export function tvMarker(s: Screen, tv: number, player: number | null) {
   const col = 6 + (tv % 4) * 6, row = 8 + Math.floor(tv / 4) * 8;
-  setMapEntry(s, SELECT_BG1, col, row, on ? 0x1815 : 0x0802);
-  setMapEntry(s, SELECT_BG1, col + 1, row, on ? 0x1816 : 0x0803);
+  if (player === null) {
+    setMapEntry(s, SELECT_BG1, col, row, 0x0802);
+    setMapEntry(s, SELECT_BG1, col + 1, row, 0x0803);
+    return;
+  }
+  const digit = player === 1 ? 0x15 : player === 2 ? 0x17 : onlineDigitTile(s, player);
+  setMapEntry(s, SELECT_BG1, col, row, 0x1800 | digit);
+  setMapEntry(s, SELECT_BG1, col + 1, row, player === 2 ? 0x1818 : 0x1816);
+}
+
+/** Extra online-player digits in the same 8x8 framed-label style as the ROM's 1P/2P tiles. */
+const ONLINE_DIGITS: Record<number, readonly string[]> = {
+  3: ['.....', '.XXX.', '....X', '..XX.', '....X', '.XXX.'],
+  4: ['...X.', '..XX.', '.X.X.', 'XXXXX', '...X.', '...X.'],
+  5: ['.XXXX', '.X...', '.XXX.', '....X', '....X', '.XXX.'],
+  6: ['..XXX', '.X...', '.XXXX', '.X..X', '.X..X', '..XX.'],
+  7: ['.XXXX', '....X', '...X.', '..X..', '..X..', '..X..'],
+  8: ['..XXX', '.X..X', '..XX.', '.X..X', '.X..X', '..XX.'],
+};
+
+function onlineDigitTile(s: Screen, player: number): number {
+  const tile = 0x50 + player - 3;
+  const at = 0x6000 + tile * 16;
+  // Tile 02 is the left half of the original empty marker: retain its frame,
+  // then draw a compact, one-colour digit with the original marker palette.
+  s.vram.copyWithin(at, 0x6000 + 0x02 * 16, 0x6000 + 0x03 * 16);
+  const rows = ONLINE_DIGITS[player];
+  if (!rows) return tile;
+  for (let y = 0; y < rows.length; y++) {
+    for (let x = 0; x < rows[y].length; x++) {
+      if (rows[y][x] === 'X') s.vram[at + (y + 2) * 2] |= 1 << (7 - (x + 2));
+    }
+  }
+  return tile;
 }
 
 /** The "1P OK?" box at the bottom right. */
