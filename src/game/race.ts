@@ -6,7 +6,7 @@ import {
   CPU_SPECIAL, type Cc, type EntityKind, type ItemKind, type KartNetState, type PlayerInfo, type ServerMsg,
 } from '../../shared/protocol';
 import { ROULETTE_MS, START_COINS } from '../../shared/items';
-import { CHARACTERS, Genre, TILE, type DriverSprites, type ItemGraphics, type SpriteFrame, type Track } from '../rom/rom';
+import { CHARACTERS, Genre, MAP_PX, TILE, type DriverSprites, type ItemGraphics, type SpriteFrame, type Track } from '../rom/rom';
 import { RemoteKarts, type NetClient } from '../net/client';
 import type { Channel } from '../net/local';
 import { readInput } from './input';
@@ -19,7 +19,7 @@ import { insideZone, type ZoneNow } from '../../shared/royale';
 import { BotDriver, type Rival } from '../royale/bot';
 import type { RoyaleState } from '../royale/state';
 import { regionAt } from '../royale/world';
-import { CHASE_DISTANCE, Renderer, type MapMarker, type ObjectSprite, type Sprite } from './renderer';
+import { CHASE_DISTANCE, MAP_SCALE, Renderer, SCREEN_W, type MapMarker, type ObjectSprite, type Sprite } from './renderer';
 import { PLACE_RED, RaceHud, placeRainbow, type LakituShow } from './hud';
 import { CpuDriver, rubberBand } from './cpu';
 import { objectState } from './objects';
@@ -188,7 +188,7 @@ export class Race {
       cols: world.cols, rows: world.rows, ids: world.ids, atlas: world.atlas, atlasW: 512, atlasH: 256, outside: world.baseTheme * 256 + 0x44,
     } : null);
     o.sound?.course(o.track.theme);
-    if (o.royale) this.followRegion(true);
+    if (o.royale) { this.followRegion(true); this.showWorldMap(); }
     o.hud.note.textContent = '';
 
     if (o.net) {
@@ -445,7 +445,6 @@ export class Race {
           .filter((r) => (this.balloons.get(r.id) ?? 1) > 0);
         const w = this.watched(alive);
         if (w) this.placeCamera(false, w.x, w.y, w.a);
-        this.o.renderer.mapOrigin = this.mapOriginAt(this.cam.x, this.cam.y);
         if (this.o.net && this.frame % 30 === 0) this.o.net.send({ t: 'focus', x: Math.round(this.cam.x), y: Math.round(this.cam.y) });
         return;
       }
@@ -481,7 +480,6 @@ export class Race {
     this.stepItems(now, input, racing);
     if (this.o.royale) this.stepBots(now, racing);
     else this.stepCpus(now, racing);
-    if (this.o.royale) this.o.renderer.mapOrigin = this.mapOriginAt(this.kart.x, this.kart.y);
 
     if (!this.o.royale && this.kart.lap > TOTAL_LAPS && !this.finishedAt && lapBefore === TOTAL_LAPS) {
       this.finishedAt = now;
@@ -676,11 +674,15 @@ export class Race {
     }
   }
 
-  /** The course map (lower screen) shows the 1024 x 1024 world area around (x, y). */
-  private mapOriginAt(x: number, y: number) {
+  /**
+   * Battle Royale: the course map (lower screen) shows the whole world, so every driver still in is on it:
+   * as wide as the screen on its nearest (widest) line, its south edge on the map's last line.
+   */
+  private showWorldMap() {
     const w = this.o.royale!.world.world;
-    const max = (n: number) => Math.max(0, n * TILE - 1024);
-    return { x: Math.round(Math.min(max(w.cols), Math.max(0, x - 512))), y: Math.round(Math.min(max(w.rows), Math.max(0, y - 512))) };
+    const r = this.o.renderer;
+    r.mapZoom = (w.cols * TILE) / (SCREEN_W * MAP_SCALE);
+    r.mapOrigin = { x: 0, y: w.rows * TILE - MAP_PX * r.mapZoom };
   }
 
   /** Battle Royale: how many drivers are still in. */
@@ -900,11 +902,11 @@ export class Race {
     }
 
     // Course map: everyone's head; our own drawn last (on top).
-    const marker = (id: number, x: number, y: number): MapMarker => {
+    const marker = (id: number, x: number, y: number, small = false): MapMarker => {
       const c = charOf(id);
-      return { x, y, character: c, palette: CHARACTERS[c].palette - 8 };
+      return { x, y, character: c, palette: CHARACTERS[c].palette - 8, small };
     };
-    const markers = remotes.filter((r) => r !== watched).map((r) => marker(r.id, r.x, r.y));
+    const markers = remotes.filter((r) => r !== watched).map((r) => marker(r.id, r.x, r.y, !!o.royale));
     if (watched) markers.push(marker(watched.id, watched.x, watched.y));
     else if (!o.spectate && !this.out) markers.push(marker(o.selfId, me.x, me.y));
 

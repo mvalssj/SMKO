@@ -90,6 +90,8 @@ export interface MapMarker {
   character: number;
   /** Sprite palette (0-7) of the driver. */
   palette: number;
+  /** Drawn at half size (everyone else on Battle Royale's map of the whole world). */
+  small?: boolean;
 }
 
 const VERT = `
@@ -134,6 +136,7 @@ uniform float uFocal;
 uniform vec3 uSky;
 uniform vec2 uBgScroll;
 uniform vec2 uMapOrigin;
+uniform float uMapZoom;
 uniform vec3 uZone;
 ${floorFn(world)}
 // Battle Royale: outside the safe area the floor is tinted (uZone = centre, radius; radius < 0 = none).
@@ -169,16 +172,16 @@ void main() {
   } else if (sy >= ${MAP_TOP}.0 && sy < ${MAP_BOTTOM}.0) {
     // Course map: north up, leaning away from the viewer.
     float t = (sy - ${MAP_TOP}.0 + 0.5) / ${MAP_BOTTOM - MAP_TOP}.0;
-    float wy = ${MAP_PX}.0 * t * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
-    float scale = ${MAP_SCALE} * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
-    vec2 mp = uMapOrigin + vec2(${MAP_PX / 2}.0 + (sx + 0.5 - ${w / 2}.0) * scale, wy);
+    float wy = ${MAP_PX}.0 * uMapZoom * t * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
+    float scale = ${MAP_SCALE} * uMapZoom * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
+    vec2 mp = uMapOrigin + vec2(${MAP_PX / 2}.0 * uMapZoom + (sx + 0.5 - ${w / 2}.0) * scale, wy);
     c = zoned(floorAt(mp), mp);
   }
   gl_FragColor = vec4(c, 1.0);
 }
 `;
 
-const UNIFORMS = ['uMap', 'uFill', 'uBgFront', 'uBgBack', 'uCam', 'uAngle', 'uFocal', 'uSky', 'uBgScroll', 'uMapOrigin', 'uZone'];
+const UNIFORMS = ['uMap', 'uFill', 'uBgFront', 'uBgBack', 'uCam', 'uAngle', 'uFocal', 'uSky', 'uBgScroll', 'uMapOrigin', 'uMapZoom', 'uZone'];
 
 export interface DriverFrames {
   /** frames[distanceRow][angleSlot] */
@@ -217,6 +220,8 @@ export class Renderer {
   private world: WorldShape | null = null;
   /** Top-left of the 1024 x 1024 area the course map (lower screen) shows: a course shows whole. */
   mapOrigin = { x: 0, y: 0 };
+  /** World pixels per course-map pixel, relative to the original's (Battle Royale: the whole world). */
+  mapZoom = 1;
   /** Battle Royale safe area (floor outside it is tinted), or null. */
   zone: { x: number; y: number; r: number } | null = null;
 
@@ -274,6 +279,7 @@ export class Renderer {
       this.setWidth(this.width, true);
     }
     this.mapOrigin = { x: 0, y: 0 };
+    this.mapZoom = 1;
     this.zone = null;
     if (world) {
       const ids = new Uint8Array(world.cols * world.rows * 4);
@@ -356,6 +362,7 @@ export class Renderer {
     const turn = cam.angle / (Math.PI * 2);
     gl.uniform2f(u.uBgScroll, turn * BG_FRONT_W, turn * BG_BACK_W);
     gl.uniform2f(u.uMapOrigin, this.mapOrigin.x, this.mapOrigin.y);
+    gl.uniform1f(u.uMapZoom, this.mapZoom);
     gl.uniform3f(u.uZone, this.zone?.x ?? 0, this.zone?.y ?? 0, this.zone ? this.zone.r : -1);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
@@ -370,9 +377,9 @@ export class Renderer {
     // The course map is centred in the picture, the HUD in the original's 256 columns.
     layer.ox = this.pad;
     for (const m of markers) {
-      const p = mapPoint(m.x - this.mapOrigin.x, m.y - this.mapOrigin.y);
+      const p = mapPoint(m.x - this.mapOrigin.x, m.y - this.mapOrigin.y, this.mapZoom);
       if (p && (p.x < -8 || p.x > SCREEN_W + 8)) continue;
-      if (p) this.hud!.head(m.character, p.x, p.y, m.palette);
+      if (p) this.hud!.head(m.character, p.x, p.y, m.palette, m.small);
     }
     layer.setClip();
     this.hud!.placeShow = null;
@@ -514,12 +521,12 @@ export function placeMask(table: Uint8Array, n: number, put: (x: number, y: numb
 }
 
 /** Where a world position shows on the course map (lower screen), or null outside it. */
-export function mapPoint(x: number, y: number): { x: number; y: number } | null {
-  const u = y / MAP_PX;
+export function mapPoint(x: number, y: number, zoom = 1): { x: number; y: number } | null {
+  const u = y / (MAP_PX * zoom);
   if (u < 0 || u > 1) return null;
   const t = u / (1 + MAP_TILT - MAP_TILT * u);
-  const scale = (MAP_SCALE * (1 + MAP_TILT)) / (1 + MAP_TILT * t);
-  return { x: SCREEN_W / 2 + (x - MAP_PX / 2) / scale, y: MAP_TOP + t * (MAP_BOTTOM - MAP_TOP) };
+  const scale = (MAP_SCALE * zoom * (1 + MAP_TILT)) / (1 + MAP_TILT * t);
+  return { x: SCREEN_W / 2 + (x - (MAP_PX * zoom) / 2) / scale, y: MAP_TOP + t * (MAP_BOTTOM - MAP_TOP) };
 }
 
 export function withRowHeights(sprites: DriverSprites): DriverFrames {

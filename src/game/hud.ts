@@ -199,8 +199,44 @@ export class RaceHud {
     this.layer.frame(f, 128 - (f.w >> 1) - 8, 4);
   }
 
-  /** A driver's head on the course map (its square backdrop, color 1 joined to the border, left out). */
-  head(character: number, x: number, y: number, palette: number) {
+  /**
+   * A driver's head on the course map (its square backdrop, color 1 joined to the border, left out).
+   * `small`: half size (Battle Royale's map of the whole world, where everyone else is).
+   */
+  head(character: number, x: number, y: number, palette: number, small = false) {
+    const L = this.layer;
+    const px = this.headPixels(character, small);
+    const size = small ? 8 : 16;
+    const x0 = Math.round(x) - (small ? 3 : 7), y0 = Math.round(y) - (small ? 6 : 12);
+    const base = (8 + palette) * 16;
+    for (let p = 0; p < px.length; p++) {
+      if (px[p] >= 0) L.rect(x0 + (p % size), y0 + Math.floor(p / size), 1, 1, L.colors[base + px[p]]);
+    }
+  }
+
+  private heads = new Map<number, Int8Array>();
+  /** A head's color indices (-1 = left out), worked out once per driver and size. */
+  private headPixels(character: number, small: boolean): Int8Array {
+    const key = character * 2 + (small ? 1 : 0);
+    let out = this.heads.get(key);
+    if (out) return out;
+    const full = this.headMask(character);
+    if (!small) out = full;
+    else {
+      // Half size: each 2x2 block becomes its most common color, if at least half of it is drawn.
+      out = new Int8Array(64).fill(-1);
+      for (let p = 0; p < 64; p++) {
+        const bx = (p & 7) * 2, by = (p >> 3) * 2;
+        const block = [full[by * 16 + bx], full[by * 16 + bx + 1], full[(by + 1) * 16 + bx], full[(by + 1) * 16 + bx + 1]].filter((c) => c >= 0);
+        if (block.length < 2) continue;
+        out[p] = block.reduce((best, c) => (block.filter((d) => d === c).length > block.filter((d) => d === best).length ? c : best), block[0]);
+      }
+    }
+    this.heads.set(key, out);
+    return out;
+  }
+
+  private headMask(character: number): Int8Array {
     const L = this.layer, t0 = 0x120 + character * 2;
     const ci = (px: number, py: number) => L.tilePixel(t0 + (py >> 3) * 16 + (px >> 3), px & 7, py & 7);
     const backdrop = new Uint8Array(256);
@@ -218,11 +254,9 @@ export class RaceHud {
       if (py > 0) stack.push(p - 16);
       if (py < 15) stack.push(p + 16);
     }
-    const x0 = Math.round(x) - 7, y0 = Math.round(y) - 12;
-    for (let p = 0; p < 256; p++) {
-      if (backdrop[p]) continue;
-      L.rect(x0 + (p & 15), y0 + (p >> 4), 1, 1, L.colors[(8 + palette) * 16 + ci(p & 15, p >> 4)]);
-    }
+    const out = new Int8Array(256);
+    for (let p = 0; p < 256; p++) out[p] = backdrop[p] ? -1 : ci(p & 15, p >> 4);
+    return out;
   }
 
   // ---------- Lakitu ----------
