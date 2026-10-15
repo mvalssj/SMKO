@@ -9,7 +9,7 @@ export const ROYALE_BALLOONS = 3;
 /** Outside the safe area a balloon pops every few seconds (Lakitu shows his reverse sign meanwhile). */
 export const ZONE_POP_MS = 4000;
 
-/** World layout (tiles of 8 px): 6 x 4 course maps of 128 tiles, 24 tiles of grass between, 12 round. */
+/** World layout (tiles of 8 px): 6 x 4 course maps of 128 tiles, 24 tiles between them, 12 round. */
 export const TILE_PX = 8;
 export const COURSE_TILES = 128;
 export const GAP_TILES = 24;
@@ -21,16 +21,49 @@ export const WORLD_ROWS = 2 * MARGIN_TILES + GRID_ROWS * COURSE_TILES + (GRID_RO
 export const WORLD_W = WORLD_COLS * TILE_PX;
 export const WORLD_H = WORLD_ROWS * TILE_PX;
 
-/** Places the safe area can close on: the middle of each course and of each road between courses. */
-export function zoneAnchors(): { x: number; y: number }[] {
-  const out: { x: number; y: number }[] = [];
+/**
+ * The world's regions: the courses of one kind of land side by side, with no road between them (their own
+ * ground fills the gaps), and Mario Circuit roads only between regions. Courses are indices into COURSE_NAMES
+ * (shared/names.ts). The final circles of the safe area keep off the deadly regions (void and lava).
+ */
+export const WORLD_REGIONS: { name: string; courses: number[]; deadly: boolean }[] = [
+  { name: 'Vanilla Lake', courses: [12, 18, 22], deadly: false },
+  { name: 'Ghost Valley', courses: [2, 6, 17], deadly: true },
+  { name: 'Donut Plains', courses: [1, 7, 15, 20], deadly: false },
+  { name: 'Mario Circuit', courses: [0, 4, 9, 14, 23], deadly: false },
+  { name: 'Bowser Castle', courses: [3, 8, 13], deadly: true },
+  { name: 'Koopa Beach', courses: [10, 16, 21], deadly: false },
+  { name: 'Choco Island', courses: [5, 11], deadly: false },
+  { name: 'Rainbow Road', courses: [19], deadly: true },
+];
+/** The course on each cell of the grid, by row (indices into COURSE_NAMES). */
+export const WORLD_LAYOUT: number[][] = [
+  [12, 18, 22, 2, 6, 17],
+  [1, 7, 0, 4, 9, 3],
+  [15, 20, 14, 23, 8, 13],
+  [10, 16, 21, 5, 11, 19],
+];
+/** Region (index into WORLD_REGIONS) of a grid cell; -1 outside the grid. */
+export function cellRegion(row: number, col: number): number {
+  if (row < 0 || col < 0 || row >= GRID_ROWS || col >= GRID_COLS) return -1;
+  const course = WORLD_LAYOUT[row][col];
+  return WORLD_REGIONS.findIndex((r) => r.courses.includes(course));
+}
+
+/**
+ * Places the safe area can close on: the middle of each course and of each gap between courses. Safe ones
+ * aren't wholly in a deadly region (a gap between a deadly region and another is a road: safe).
+ */
+export function zoneAnchors(): { x: number; y: number; safe: boolean }[] {
+  const out: { x: number; y: number; safe: boolean }[] = [];
   const step = (COURSE_TILES + GAP_TILES) * TILE_PX, m = MARGIN_TILES * TILE_PX, half = (COURSE_TILES * TILE_PX) / 2;
+  const safe = (...cells: [number, number][]) => cells.some(([r, c]) => !WORLD_REGIONS[cellRegion(r, c)].deadly);
   for (let r = 0; r < GRID_ROWS; r++) {
     for (let c = 0; c < GRID_COLS; c++) {
       const x = m + c * step + half, y = m + r * step + half;
-      out.push({ x, y });
-      if (c + 1 < GRID_COLS) out.push({ x: x + step / 2, y });
-      if (r + 1 < GRID_ROWS) out.push({ x, y: y + step / 2 });
+      out.push({ x, y, safe: safe([r, c]) });
+      if (c + 1 < GRID_COLS) out.push({ x: x + step / 2, y, safe: safe([r, c], [r, c + 1]) });
+      if (r + 1 < GRID_ROWS) out.push({ x, y: y + step / 2, safe: safe([r, c], [r + 1, c]) });
     }
   }
   return out;
@@ -66,8 +99,10 @@ export function zoneCircles(seed: number): Circle[] {
   const circles = [first];
   let prev = first;
   for (const p of PHASES) {
-    // The next circle lies wholly inside the current one, centred on a course or a road.
-    const fits = anchors.filter((a) => Math.hypot(a.x - prev.x, a.y - prev.y) + p.r <= prev.r);
+    // The next circle lies wholly inside the current one, centred on a course or a gap; the small ones keep
+    // off the void and the lava when they can.
+    let fits = anchors.filter((a) => Math.hypot(a.x - prev.x, a.y - prev.y) + p.r <= prev.r);
+    if (p.r <= 1000 && fits.some((a) => a.safe)) fits = fits.filter((a) => a.safe);
     const pick = fits.length ? fits[Math.floor(rand() * fits.length)] : prev;
     prev = { x: pick.x, y: pick.y, r: p.r };
     circles.push(prev);
@@ -98,8 +133,7 @@ export function worldCourseAt(x: number, y: number): number {
   const tx = x / TILE_PX - MARGIN_TILES, ty = y / TILE_PX - MARGIN_TILES;
   const c = Math.floor(tx / step), r = Math.floor(ty / step);
   if (c < 0 || r < 0 || c >= GRID_COLS || r >= GRID_ROWS || tx - c * step >= COURSE_TILES || ty - r * step >= COURSE_TILES) return -1;
-  // A cup per row (its five tracks), its battle course last.
-  return c < 5 ? r * 5 + c : 20 + r;
+  return WORLD_LAYOUT[r][c];
 }
 
 export function insideZone(z: Circle, x: number, y: number): boolean {

@@ -12,7 +12,7 @@ import {
 import { DEFAULT_ODDS, ItemAuthority, validOdds } from '../shared/items';
 import {
   COURSE_TILES, GAP_TILES, GRID_COLS, GRID_ROWS, MARGIN_TILES, ROYALE_PLAYERS, RoyaleAuthority, WORLD_COLS, WORLD_H, WORLD_ROWS, WORLD_W,
-  worldCourseAt, zoneAt,
+  WORLD_LAYOUT, worldCourseAt, zoneAt,
 } from '../shared/royale';
 import { COURSE_NAMES } from '../shared/names';
 import { adminOut, adminTick, adminWarn, record, registerAdminSource, settings } from './admin';
@@ -337,7 +337,7 @@ registerAdminSource({
     const round = (c: { x: number; y: number; r: number }) => ({ x: Math.round(c.x), y: Math.round(c.y), r: Math.round(c.r) });
     return {
       w: WORLD_W, h: WORLD_H,
-      grid: { cols: GRID_COLS, rows: GRID_ROWS, course: COURSE_TILES * 8, gap: GAP_TILES * 8, margin: MARGIN_TILES * 8, names: COURSE_NAMES },
+      grid: { cols: GRID_COLS, rows: GRID_ROWS, course: COURSE_TILES * 8, gap: GAP_TILES * 8, margin: MARGIN_TILES * 8, names: WORLD_LAYOUT.flat().map((i) => COURSE_NAMES[i]) },
       zone: round(z.now), next: round(z.next),
       karts: [...m.players.values()].flatMap((p) => (p.kart && (m.royale.balloons.get(p.id) ?? 0) > 0
         ? [{ id: p.id, x: Math.round(p.kart.x), y: Math.round(p.kart.y), cpu: !!p.info.cpu, character: p.info.character }] : [])),

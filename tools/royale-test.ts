@@ -7,7 +7,7 @@ import { buildWorld } from '../src/royale/world';
 import { RoyaleState } from '../src/royale/state';
 import { BotDriver } from '../src/royale/bot';
 import { createKart, raceGeometry, stepKart, terrainOf } from '../src/game/physics';
-import { WORLD_H, WORLD_W, mulberry32, zoneCircles } from '../shared/royale';
+import { WORLD_H, WORLD_REGIONS, WORLD_W, mulberry32, worldCourseAt, zoneCircles } from '../shared/royale';
 
 const rom = new SmkRom(new Uint8Array(readFileSync(process.argv[2])));
 const secs = +(process.argv[3] ?? 30);
@@ -17,7 +17,7 @@ const check = (ok: boolean, msg: string) => { console.log(`${ok ? 'OK  ' : 'FALH
 const world = buildWorld(rom);
 const { cols, rows, regions, courses } = world.world;
 
-// 1. Every course reachable by road (anything you can drive on) from Mario Circuit 1's racing line.
+// 1. Every course reachable by road (anything you can drive on) from the first course's racing line.
 const seen = new Uint8Array(cols * rows);
 const start = courses[0].path[0];
 const queue = [Math.floor(start.y / TILE) * cols + Math.floor(start.x / TILE)];
@@ -47,6 +47,13 @@ for (let seed = 1; seed <= 50; seed++) {
   }
 }
 check(circlesOk, 'zona: cada círculo dentro do anterior e dentro do mundo (50 partidas)');
+const deadly = new Set(WORLD_REGIONS.filter((r) => r.deadly).flatMap((r) => r.courses));
+let deadlyEnds = 0;
+for (let seed = 1; seed <= 200; seed++) {
+  const c = zoneCircles(seed), last = c[c.length - 1];
+  if (deadly.has(worldCourseAt(last.x, last.y))) deadlyEnds++;
+}
+check(deadlyEnds <= 10, `zona: o fim quase nunca cai no vazio ou na lava (${deadlyEnds} de 200 partidas)`);
 
 // 3. Bots driving about for a while.
 const st = new RoyaleState(world, 777);

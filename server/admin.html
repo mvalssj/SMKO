@@ -482,7 +482,7 @@ async function drawLive() {
       const x = (v.grid.margin + col * (v.grid.course + v.grid.gap)) * s, y = (v.grid.margin + r * (v.grid.course + v.grid.gap)) * s, w = v.grid.course * s;
       g.fillStyle = col < 5 ? '#1c3a24' : '#3a2c18'; g.fillRect(x, y, w, w);
       g.fillStyle = 'rgba(255,255,255,0.45)';
-      g.fillText(v.grid.names[col < 5 ? r * 5 + col : 20 + r], x + w / 2, y + w / 2);
+      g.fillText(v.grid.names[r * v.grid.cols + col], x + w / 2, y + w / 2);
     }
     if (v.zone) {
       // Outside the safe area: purple, as in the game.

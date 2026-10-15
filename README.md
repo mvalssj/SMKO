@@ -130,9 +130,18 @@ plataformas.
 
 No menu principal: **BATTLE ROYALE**. São 100 pilotos num mundo aberto que junta todas as pistas do jogo: as 20 do GP e as 4 de batalha. Vence o último que ainda tiver balões.
 
-- **O mundo:** é uma grade de 6 × 4 pistas, com cada copa numa linha e a pista de batalha no fim.
-  - As pistas ficam como azulejos e as estradas são o rejunte: todo o espaço entre elas, e a volta do mundo, é uma estrada no estilo do Mario Circuit (asfalto listrado e bordas copiados das retas do Mario Circuit 1 e 2), com cruzamentos de asfalto.
-  - De cada lado de cada pista sai uma entrada que abre a cerca e vai até o traçado, atravessando o que houver no caminho: canos, vazio, água, lava.
+- **O mundo:** é uma grade de 6 × 4 pistas agrupadas em 8 regiões pelo tipo de terreno:
+  ```
+  GELO   GELO   GELO  │ FANTASMA FANTASMA FANTASMA
+  DONUT  DONUT  MARIO   MARIO    MARIO   CASTELO
+  DONUT  DONUT  MARIO   MARIO   CASTELO  CASTELO
+  PRAIA  PRAIA  PRAIA │ CHOCO    CHOCO   RAINBOW
+  ```
+  - Dentro de uma região as pistas ficam coladas, sem fronteira: o espaço entre elas é preenchido com o chão da própria região (grama, neve, chocolate, areia do Mario Circuit) e as cercas da borda são retiradas.
+  - Onde o chão da região é vazio, lava ou mar fundo (Ghost Valley, Bowser Castle, Koopa Beach), uma ponte com o piso das próprias pistas (tábuas, tijolos, areia) passa pelo meio do espaço entre elas.
+  - Entre regiões diferentes, e só ali, ficam as estradas no estilo do Mario Circuit (asfalto listrado e bordas copiados das retas do Mario Circuit 1 e 2), como o rejunte entre azulejos, com cruzamentos de asfalto.
+  - De cada lado de cada pista (menos na borda do mundo) sai uma entrada que abre a cerca e vai até o traçado, atravessando o que houver no caminho: canos, vazio, água, lava. Vinda da estrada, é de asfalto; vinda da própria região, é do piso da pista.
+  - Os últimos círculos da zona evitam as regiões mortais (Ghost Valley, Bowser Castle e Rainbow Road).
   - O verde de fora das cercas, que na pista original é "fora dos limites", vira grama transitável.
   - Cada pista mantém seus blocos, terreno, objetos (canos, Thwomps, toupeiras, plantas, peixes), caixas de item e moedas.
   - O céu do horizonte e a música mudam conforme a pista em que você está.
