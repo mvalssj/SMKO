@@ -494,6 +494,7 @@ export class Race {
       .filter((r) => r.f === 0 && !(r.e & (EFFECT_GHOST | EFFECT_SHRUNK))));
     const lapBefore = this.kart.lap;
     const spinBefore = this.kart.spin, boostBefore = this.kart.boost;
+    this.headingBefore = this.kart.angle;
     const ev = stepKart(this.kart, input, this.o.track, this.geo, others, this.raceFrame(now));
     this.kartSounds(ev, input, spinBefore, boostBefore, now);
     if (ev.broken.length) {
@@ -523,7 +524,10 @@ export class Race {
       // After the finish the camera swings round to the front of the kart (half a turn in about a second, as measured).
       const t = Math.min(1, (now - this.finishedAt) / (FINISH_SWING_FRAMES * STEP_MS));
       this.placeCamera(true, this.kart.x, this.kart.y, this.kart.angle + Math.PI * (t * t * (3 - 2 * t)));
-    } else this.placeCamera(false);
+    } else if (this.kart.spin > 0) this.placeCamera(false);
+    // The original's camera looks along the kart's heading of the frame before (measured: its DSP-1 azimuth),
+    // not turning after it slowly. (Spinning, it follows smoothly, as before: not measured.)
+    else this.placeCamera(true, this.kart.x, this.kart.y, this.headingBefore ?? this.kart.angle);
     // Positions go to the server online, or to the local item authority in solo (for item odds by place).
     if (++this.frame % Math.round(60 / NET_HZ) === 0) {
       const { id: _id, ...state } = netState(this.o.selfId, this.kart);
@@ -1019,6 +1023,8 @@ export class Race {
   }
 
   private watchKeys = false;
+  /** The kart's heading before this frame's step: the camera looks along it. */
+  private headingBefore: number | null = null;
   /** The pad last frame (see step: the kart answers it a frame late, as in the original). */
   private lastPad: Input = NO_INPUT;
 

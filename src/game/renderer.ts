@@ -12,11 +12,30 @@ import { Layer } from './layer';
 
 export const SCREEN_W = 256;
 export const SCREEN_H = 224;
-export const CAM_HEIGHT = 20;
-/** Camera-to-own-kart distance; at this depth the nearest (largest) driver frames are drawn. */
-export const CHASE_DISTANCE = 34;
-/** Own kart's wheels on line 101 (sprite at y = 70, 32 tall): HORIZON + CAM_HEIGHT * FOCAL / CHASE_DISTANCE = 102. */
-export const FOCAL = ((102 - HORIZON) * CHASE_DISTANCE) / CAM_HEIGHT;
+/**
+ * The race camera: the original's, from the parameters the game gives the DSP-1 every frame, the same all
+ * race long (the game's units are 1/4 px): it looks at the kart from 64 px away (Lfe 256), tilted down
+ * 16.875° (zenith 13312 of 65536), the screen 256 px from the eye (Les 256). The kart it looks at is the middle
+ * of the picture, on line HORIZON + 256 tan 16.875° = 101.6, and the horizon falls on line 24, as measured.
+ */
+export interface View {
+  /** Eye to the kart looked at (px), downward tilt (radians), screen distance (px), the kart's screen line. */
+  dist: number;
+  pitch: number;
+  focal: number;
+  center: number;
+  /** Derived: the eye's height and how far behind the kart it is (px). */
+  height: number;
+  back: number;
+}
+const view = (dist: number, pitch: number, focal: number, horizon: number): View => ({
+  dist, pitch, focal, center: horizon + focal * Math.tan(pitch), height: dist * Math.sin(pitch), back: dist * Math.cos(pitch),
+});
+export const VIEW = view(64, ((90 - (13312 * 360) / 65536) * Math.PI) / 180, 256, HORIZON);
+export const FOCAL = VIEW.focal;
+/** How far behind the kart the eye is (px, along the ground); at the eye-to-kart distance the nearest (largest) driver frames are drawn. */
+export const CHASE_DISTANCE = VIEW.back;
+export const CAM_HEIGHT = VIEW.height;
 
 /**
  * Battle Royale's little planet: the floor curves away from the camera like a log rolling under it (as in
@@ -27,11 +46,32 @@ export const PLANET_RADIUS = 7000;
 
 /**
  * Without the course map (the player hid it, key M): the race view fills the whole picture. The sky band and
- * the HUD move `shift` lines down and the camera goes up to `camHeight` (same distance behind the kart, same
- * scale, so every sprite stays 1:1): the kart's wheels come near the bottom, as on the original's top screen,
- * the floor under them about as magnified as there, and more of the course shows ahead.
+ * the HUD move `shift` lines down and the camera tilts down further (30°, same distance from the kart and
+ * same screen distance, so every sprite stays 1:1): the kart comes near the bottom, as on the original's top
+ * screen, and more of the course shows ahead.
  */
-export const FULL_VIEW = { shift: 32, camHeight: 38 };
+export const FULL_VIEW = { shift: 32, view: view(64, (30 * Math.PI) / 180, 256, HORIZON + 32) };
+/** The camera for the picture with or without the course map. */
+export const viewFor = (full: boolean) => (full ? FULL_VIEW.view : VIEW);
+
+/**
+ * Where a screen line meets the floor, for the camera `v`: the distance ahead of the eye along the ground and
+ * the floor's size per screen pixel across, or null above the horizon (or past the little planet's, `curve`
+ * = 1 / 2R: the floor x px ahead lies x² curve below the flat one). The line's offset from the kart's line is
+ * `sy - v.center + 1`, as the floor and the sprites both count it.
+ */
+export function floorLine(v: View, sy: number, curve = 0): { ahead: number; across: number } | null {
+  const y = sy - v.center + 1, s = Math.sin(v.pitch), c = Math.cos(v.pitch);
+  const down = v.focal * s + y * c, fwd = v.focal * c - y * s;
+  if (down <= 0) return null;
+  let t = v.height / down;
+  if (curve > 0) {
+    const a = curve * fwd * fwd, disc = down * down - 4 * a * v.height;
+    if (disc < 0) return null;
+    t = (down - Math.sqrt(disc)) / (2 * a);
+  }
+  return { ahead: t * fwd, across: t };
+}
 
 /** Course map (lower screen): the course leans away, so the far edge is narrower. */
 export const MAP_TILT = 0.7;
@@ -157,8 +197,9 @@ float zoneDistance(vec2 w) { return distance(w, uZone.xy); }`;
  * the course map hidden, the view filling the picture (FULL_VIEW).
  */
 const frag = (w: number, world: WorldShape | null = null, full = false) => {
-  const shift = full ? FULL_VIEW.shift : 0, camHeight = full ? FULL_VIEW.camHeight : CAM_HEIGHT;
+  const shift = full ? FULL_VIEW.shift : 0, v = viewFor(full);
   const HORIZON_AT = HORIZON + shift, SKY_FROM = full ? 0 : SKY_TOP, VIEW_TO = full ? SCREEN_H : VIEW_BOTTOM;
+  const f = (x: number) => x.toFixed(6);
   return `
 precision highp float;
 uniform sampler2D uMap;
@@ -186,16 +227,20 @@ void main() {
   float sy = floor(${SCREEN_H}.0 - gl_FragCoord.y);
   float sx = floor(gl_FragCoord.x);
   vec3 c = vec3(0.0);
-  // Race view (Mode 7): one floor line per screen line, z ahead. On the little planet (uCurve = 1 / 2R) a
-  // point z ahead is z * z * uCurve below the flat floor; past the planet's horizon there is only sky.
-  float dy = sy - ${HORIZON_AT}.0 + 1.0;
-  float z = ${camHeight}.0 * uFocal / dy;
-  bool ground = sy >= ${HORIZON_AT}.0 && sy < ${VIEW_TO}.0;
+  // Race view (Mode 7): one floor line per screen line, as the original's tilted camera sees it (floorLine):
+  // z ahead of the eye along the ground, 'across' floor px per screen px. On the little planet (uCurve =
+  // 1 / 2R) a point z ahead is z * z * uCurve below the flat floor; past the planet's horizon there is only sky.
+  float yv = sy - ${f(v.center)} + 1.0;
+  float down = ${f(v.focal * Math.sin(v.pitch))} + yv * ${f(Math.cos(v.pitch))};
+  float fwdRay = ${f(v.focal * Math.cos(v.pitch))} - yv * ${f(Math.sin(v.pitch))};
+  bool ground = sy >= ${HORIZON_AT}.0 && sy < ${VIEW_TO}.0 && down > 0.0;
+  float across = ${f(v.height)} / max(down, 1e-6);
   if (ground && uCurve > 0.0) {
-    float q = dy / uFocal, disc = q * q - 4.0 * uCurve * ${camHeight}.0;
+    float a = uCurve * fwdRay * fwdRay, disc = down * down - 4.0 * a * ${f(v.height)};
     if (disc < 0.0) ground = false;
-    else z = (q - sqrt(disc)) / (2.0 * uCurve);
+    else across = (down - sqrt(disc)) / (2.0 * a);
   }
+  float z = across * fwdRay;
   if (sy >= ${SKY_FROM}.0 && !ground && sy < ${VIEW_TO}.0) {
     // Sky band: the two scenery layers, bottom row on the last line above the road (uSkyDrop lines lower on
     // the little planet). Each wraps once per turn.
@@ -209,7 +254,7 @@ void main() {
       c = mix(c, front.rgb, front.a);
     }
   } else if (ground) {
-    float lateral = (sx + 0.5 - ${w / 2}.0) * z / uFocal;
+    float lateral = (sx + 0.5 - ${w / 2}.0) * across;
     vec2 fwd = vec2(sin(uAngle), -cos(uAngle));
     vec2 right = vec2(cos(uAngle), sin(uAngle));
     vec2 wp = uCam + fwd * z + right * lateral;
@@ -319,6 +364,14 @@ export class Renderer {
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
   }
 
+  /** Lines of sky under the horizon line (the little planet's horizon is lower): the first line with floor. */
+  private skyDrop(v: View): number {
+    if (this.curve <= 0) return 0;
+    const top = HORIZON + (this.fullView ? FULL_VIEW.shift : 0);
+    for (let sy = top; sy < SCREEN_H; sy++) if (floorLine(v, sy, this.curve)) return sy - top;
+    return 0;
+  }
+
   /** Shows or hides the course map (lower screen); hidden, the race view fills the picture. */
   setFullView(on: boolean) {
     if (on === this.fullView) return;
@@ -424,8 +477,8 @@ export class Renderer {
     gl.uniform3f(u.uZone, this.zone?.x ?? 0, this.zone?.y ?? 0, this.zone ? this.zone.r : -1);
     gl.uniform1f(u.uCurve, this.curve);
     // Lines of sky below the old horizon: the last line where the floor can't be seen any more.
-    const camHeight = this.fullView ? FULL_VIEW.camHeight : CAM_HEIGHT;
-    gl.uniform1f(u.uSkyDrop, this.curve > 0 ? Math.max(0, Math.ceil(FOCAL * Math.sqrt(4 * this.curve * camHeight)) - 1) : 0);
+    const v = viewFor(this.fullView);
+    gl.uniform1f(u.uSkyDrop, this.skyDrop(v));
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     const layer = this.layer;
@@ -438,7 +491,7 @@ export class Renderer {
     layer.setClip(HORIZON + shift, this.fullView ? SCREEN_H : VIEW_BOTTOM);
     const world = this.world && { w: this.world.cols * 8, h: this.world.rows * 8 };
     drawRaceView(layer, cam, sprites, objects, {
-      drivers: this.drivers, objectFrames: this.objectFrames, objectSizes: this.objectSizes, itemFrames: this.itemFrames, world, curve: this.curve, camHeight,
+      drivers: this.drivers, objectFrames: this.objectFrames, objectSizes: this.objectSizes, itemFrames: this.itemFrames, world, curve: this.curve, view: v,
     }, this.tick);
     layer.setClip(MAP_TOP, MAP_BOTTOM);
     // The course map is centred in the picture, the HUD in the original's 256 columns.
@@ -482,41 +535,46 @@ export interface SpriteSet {
   world?: { w: number; h: number } | null;
   /** The planet's curve, 1 / (2 R) (0 = flat). */
   curve?: number;
-  /** Camera height (higher with the course map hidden: FULL_VIEW). */
-  camHeight?: number;
+  /** The camera (tilted further with the course map hidden: FULL_VIEW). */
+  view?: View;
 }
 
 /** Drivers, track objects and items of the race view, far to near, at the SNES resolution. */
 export function drawRaceView(layer: Layer, cam: Camera, sprites: Sprite[], objects: ObjectSprite[], set: SpriteSet, tick: number) {
   const fx = Math.sin(cam.angle), fy = -Math.cos(cam.angle);
   const rx = Math.cos(cam.angle), ry = Math.sin(cam.angle);
-  const w = set.world, curve = set.curve ?? 0, camHeight = set.camHeight ?? CAM_HEIGHT;
+  const w = set.world, curve = set.curve ?? 0, v = set.view ?? VIEW;
+  const sp = Math.sin(v.pitch), cp = Math.cos(v.pitch);
   const project = <T extends { x: number; y: number }>(s: T) => {
     let dx = s.x - cam.x, dy = s.y - cam.y;
     if (w) { dx -= w.w * Math.round(dx / w.w); dy -= w.h * Math.round(dy / w.h); }
-    return { s, dx, dy, z: dx * fx + dy * fy, lat: dx * rx + dy * ry };
+    // z: ahead of the eye along the ground; depth: along the camera's line of sight.
+    const z = dx * fx + dy * fy;
+    return { s, dx, dy, z, lat: dx * rx + dy * ry, depth: z * cp + (v.height + z * z * curve) * sp };
   };
   // On the little planet nothing shows past its horizon (sqrt(2 R h) ahead).
-  const far = curve > 0 ? Math.min(900, Math.sqrt(camHeight / curve)) : 900;
+  const far = curve > 0 ? Math.min(900, Math.sqrt(v.height / curve)) : 900;
   type Item = ReturnType<typeof project<Sprite>> | (ReturnType<typeof project<ObjectSprite>> & { object: true });
   const items: Item[] = [
     ...sprites.map(project),
     ...objects.map((o) => ({ ...project(o), object: true as const })),
   ];
-  const projected = items.filter((p) => p.z > 4 && p.z < far).sort((a, b) => b.z - a.z);
+  const projected = items.filter((p) => p.depth > 8 && p.z < far).sort((a, b) => b.depth - a.depth);
 
   for (const item of projected) {
-    const k = FOCAL / item.z; // screen px per world px
+    const k = v.focal / item.depth; // screen px per world px
     const sx = layer.w / 2 + item.lat * k;
-    // (Further down the curve on the little planet: z * z * curve below the flat floor.)
-    const ground = HORIZON + ((camHeight + item.z * item.z * curve) * FOCAL) / item.z;
+    // Where its spot on the floor shows (further down the curve on the little planet: z * z * curve below
+    // the flat floor); a height h above the floor shows h cos(tilt) k higher.
+    const ground = v.center + ((v.height + item.z * item.z * curve) * cp - item.z * sp) * k;
+    const liftK = k * cp;
     if ('object' in item) {
       const o = item.s;
       const frames = o.item ? set.itemFrames : o.frames ?? set.objectFrames;
       const img = frames[o.frame] ?? frames[0];
       if (!img) continue;
       // 16x16 frames: objects are drawn 32px at the chase distance (like the karts), items 16px.
-      const size = Math.round((o.item ? 16 : 32) * (CHASE_DISTANCE / item.z));
+      const size = Math.round((o.item ? 16 : 32) * (v.dist / item.depth));
       if (size < 1) continue;
       // Further away the game switches to the object's smaller hand-drawn sizes, drawn 1:1.
       const allSizes = o.sizes ?? set.objectSizes;
@@ -524,16 +582,16 @@ export function drawRaceView(layer: Layer, cam: Camera, sprites: Sprite[], objec
       if (sizes?.length && size <= 16) {
         let best = sizes[0];
         for (const f of sizes) if (Math.abs(f.h - size) < Math.abs(best.h - size)) best = f;
-        layer.frame(best, Math.round(sx - best.w / 2), Math.round(ground - o.lift * k - best.h));
+        layer.frame(best, Math.round(sx - best.w / 2), Math.round(ground - o.lift * liftK - best.h));
         continue;
       }
-      layer.scaled(img, Math.round(sx - size / 2), Math.round(ground - o.lift * k - size), size, size, o.mirror);
+      layer.scaled(img, Math.round(sx - size / 2), Math.round(ground - o.lift * liftK - size), size, size, o.mirror);
       continue;
     }
     const { s, dx, dy } = item;
     const driver = set.drivers.get(s.character);
     if (!driver) continue;
-    const wanted = driver.rowHeights[0] * (CHASE_DISTANCE / item.z) * (s.scale ?? 1);
+    const wanted = driver.rowHeights[0] * (v.dist / item.depth) * (s.scale ?? 1);
     if (wanted < 2) continue;
     // The hand-drawn size closest to the wanted one, drawn 1:1.
     let row = 0;
@@ -547,7 +605,7 @@ export function drawRaceView(layer: Layer, cam: Camera, sprites: Sprite[], objec
     const f = driver.frames[row][slot];
     // Frames face right; mirrored for karts turned to the left.
     const flash = !!s.flash && (tick >> 2) % 2 === 0;
-    const x0 = Math.round(sx - f.w / 2), y0 = Math.round(ground - (s.lift ?? 0) * k - f.h);
+    const x0 = Math.round(sx - f.w / 2), y0 = Math.round(ground - (s.lift ?? 0) * liftK - f.h);
     layer.frame(f, x0, y0, rel < 0, s.alpha ?? 1, flash);
     // Effects only on the two nearest sizes, where the game draws them too.
     if (row <= 1 && !s.lift) drawKartFx(layer, s, x0, y0 + f.h, f.w, tick);

@@ -174,6 +174,11 @@ Teste: `npx tsx tools/royale-test.ts "Super Mario Kart (USA).sfc"`. Ele confere 
 ## O que já funciona
 
 - Leitura da ROM (US/JP/EU, com ou sem cabeçalho de 512 bytes) e das 20 pistas GP
+- **Câmera da corrida = a do original**: os parâmetros que o jogo passa ao DSP-1 a cada quadro, os mesmos a corrida
+  toda (unidades de 1/4 px): o olho a 64 px do kart (Lfe 256), inclinado 16,875° para baixo (zênite 13312), a tela a
+  256 px (Les 256). O kart fica no meio da imagem (linha 101,6) e o horizonte cai na linha 24, como medido; a pista
+  ao longe sai mais longa e larga do que na câmera reta usada antes. A câmera olha na direção do kart do quadro
+  anterior (o azimute do DSP-1), sem a virada lenta de antes.
 - Tela da corrida 1P como a original (256×224, medida no jogo): faixa do céu nas linhas 3–23, pista em Mode 7 nas
   linhas 24–106 (horizonte na 24, rodas do seu kart na 101), faixa preta e o mapa do circuito inclinado embaixo
   (linhas 115–218) com as cabeças dos pilotos
