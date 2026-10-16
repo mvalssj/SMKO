@@ -128,6 +128,8 @@ export interface Kart {
   airTotal: number;
   /** Item effects, in frames left. */
   star: number;
+  /** A shell's hit: the heading it spins round from (6 turns, back to it). */
+  spinFrom: number | null;
   /** Mushroom push frames left (zipper panels still use `boost`). */
   dash: number;
   /** In the air from a feather (its own arc). */
@@ -289,7 +291,7 @@ export function gridPosition(track: Track, slot: number): { x: number; y: number
 export function createKart(track: Track, slot: number, character = 0, cc: 50 | 100 | 150 = 100): Kart {
   const g = gridPosition(track, slot);
   const kart: Kart = {
-    x: g.x, y: g.y, angle: g.angle, vx: 0, vy: 0, speed: 0, boost: 0, spin: 0, fall: 0, air: 0, airTotal: 0, star: 0, dash: 0, feather: false, ghost: 0, shrink: 0, coins: 0, speedScale: 1,
+    x: g.x, y: g.y, angle: g.angle, vx: 0, vy: 0, speed: 0, boost: 0, spin: 0, fall: 0, air: 0, airTotal: 0, star: 0, spinFrom: null, dash: 0, feather: false, ghost: 0, shrink: 0, coins: 0, speedScale: 1,
     cls: CHARACTER_CLASS[character] ?? 0, ccTop: CC_TOP[cc], turnRate: 0, slide: 0, shownSlide: 0, turnFrames: 0, hop: 0, driftHeld: false,
     mtCharge: 0, mtArmed: false, mtStraight: 0, mtBoost: 0, startPress: null, startBoost: false, badStart: 0,
     safe: { ...g }, safeTimer: 0, lap: 0, armed: false, pathIndex: 0, progress: 0,
@@ -457,7 +459,14 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     k.turnFrames = 0;
   }
   k.angle += k.turnRate * ANG * grip;
-  if (k.spin > 0) { k.spin--; k.angle += 0.35; }
+  if (k.spin > 0 && k.spinFrom !== null) {
+    // Hit by a shell (measured): 4096 a frame for 64 frames, then 64 a frame less, 6 turns in all; it ends
+    // facing the way it was.
+    const t = SHELL_SPIN_FRAMES - k.spin;
+    k.spin--;
+    k.angle += Math.max(0, t < 64 ? 4096 : 4096 - 64 * (t - 63)) * ANG;
+    if (k.spin === 0) { k.angle = k.spinFrom; k.spinFrom = null; }
+  } else if (k.spin > 0) { k.spin--; k.angle += 0.35; }
 
   // The body swings out in a fast turn (more in a power slide) and swings back when straightened.
   k.shownSlide = k.slide;
@@ -602,7 +611,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     if (d >= OBJECT_HIT_DISTANCE) continue;
     const st = objectState(o.kind, i, frame);
     if (st.harmful && k.spin === 0 && !isInvincible(k)) {
-      k.spin = 40;
+      k.spin = 40; k.spinFrom = null;
       k.speed *= 0.3;
     }
     if (st.solid && d > 0) {
@@ -630,7 +639,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     k.mtBoost = 0;
   } else if (now === 'oil' && k.spin === 0 && k.speed > 1) {
     // (Driving onto it at speed: a kart sitting in the oil after a spin can drive off.)
-    k.spin = 36;
+    k.spin = 36; k.spinFrom = null;
   } else if (now === 'jump' && k.speed > 0.3) {
     // Jump bars launch the kart over gaps and walls (Bowser Castle lava, Mario Circuit 2 wall).
     const v = Math.max(1.8, Math.hypot(k.vx, k.vy));
@@ -697,8 +706,21 @@ export function isInvincible(k: Pick<Kart, 'star' | 'ghost'>): boolean {
 }
 
 /** Spin out (hit by an item or a star kart). */
-export function spinOut(k: Kart) {
+/** A shell's hit spins the kart this long (2 s: measured in the original, a green shell). */
+export const SHELL_SPIN_FRAMES = 124;
+
+/** Spun round: a shell stops the kart dead for SHELL_SPIN_FRAMES, as in the original; the rest (bananas, a star's touch...) not measured yet. */
+export function spinOut(k: Kart, shell = false) {
   if (isInvincible(k) || k.fall > 0) return;
+  if (shell) {
+    k.spin = SHELL_SPIN_FRAMES;
+    k.spinFrom = k.spin > 0 && k.spinFrom !== null ? k.spinFrom : k.angle;
+    k.speed = 0; k.vx = 0; k.vy = 0;
+    k.boost = k.dash = k.mtBoost = k.turnRate = 0;
+    k.mtArmed = false;
+    return;
+  }
+  k.spinFrom = null;
   k.spin = 50;
   k.speed *= 0.2;
   k.boost = k.dash = k.mtBoost = k.turnRate = 0;

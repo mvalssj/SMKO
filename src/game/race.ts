@@ -421,7 +421,7 @@ export class Race {
         o.channel.send({ t: 'hit', entity: e.id, cpu });
         this.entities.delete(e.id);
         if (e.kind === 'poison') { if (!isInvincible(v)) v.shrink = SHRINK_FRAMES; }
-        else spinOut(v);
+        else spinOut(v, e.kind === 'greenShell' || e.kind === 'redShell');
         break;
       }
     }

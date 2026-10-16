@@ -136,5 +136,22 @@ for (let c = 0; c < 4; c++) {
   }
 }
 
+// 7. Hit by a green shell (a CPU on the grid, with the DSP-1 answered): stopped dead, 6 turns, facing the way
+// it was. The heading's step frame by frame.
+{
+  const { spinOut, SHELL_SPIN_FRAMES } = await import('../src/game/physics');
+  const k = createKart(flat, 0, 0, 100);
+  k.speed = 48 / 256; k.vy = -k.speed;
+  const start = k.angle;
+  spinOut(k, true);
+  const orig: number[] = ref.shellSpin.facingSteps;
+  const ours: number[] = [];
+  let prev = k.angle;
+  for (let i = 0; i < SHELL_SPIN_FRAMES; i++) { stepKart(k, NO_INPUT, flat, geo, [], i); ours.push(Math.round(((k.angle - prev) * 65536) / (Math.PI * 2))); prev = k.angle; }
+  const turnsO = orig.reduce((a, b) => a + b, 0) / 65536, turnsU = (k.angle - start) === 0 ? 6 : NaN;
+  let same = 0; for (let i = 0; i < 120; i++) if (Math.abs(ours[i] - orig[i]) <= 1) same++;
+  check(k.speed === 0 && same >= 110 && Math.abs(turnsO - 6) < 0.1 && turnsU === 6, `rodada do casco: ${same} de 120 quadros com o mesmo giro, ${turnsO.toFixed(2)} voltas no original, kart parado e de volta à direção`);
+}
+
 console.log(failed ? 'houve falhas' : 'tudo certo');
 process.exit(failed ? 1 : 0);

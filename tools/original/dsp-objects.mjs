@@ -16,7 +16,7 @@ M.HEAPU8[wp + 0x0d70] = +item; M.HEAPU8[wp + 0x0d71] = 0xc0;
 const rows = [];
 const snap = () => { rows.push(Buffer.from(emu.memory(2)).subarray(0x1000, 0x2000).toString('base64')); };
 emu.run(2); snap();
-const btn = hold === 'down' ? (1 << BTN.A) | (1 << BTN.DOWN) : 1 << BTN.A;
+const btn = hold === 'down' ? (1 << BTN.A) | (1 << BTN.DOWN) : hold === 'up' ? (1 << BTN.A) | (1 << BTN.UP) : 1 << BTN.A;
 for (let i = 0; i < 4; i++) { emu.run(1, btn); snap(); }
 for (let i = 0; i < +frames; i++) { emu.run(1); snap(); }
 writeFileSync(out, JSON.stringify(rows));

@@ -51,3 +51,7 @@ o jogo original desenha pista, mapa e sprites. O mapa sai igual ao nosso. Na pis
 maiores e as marcas do chão mais espaçadas do que a mesma geometria no nosso jogo: alguma convenção de como o jogo
 usa os números do chip (linha onde começa a tabela do chão, escala M que escolhe o tamanho dos sprites) ainda não
 está certa na emulação; sem o chip verdadeiro não dá para decidir.
+
+Com os sprites projetados, os itens acertam na análise: um casco verde da largada acerta a CPU parada à frente
+(`dsp-objects.mjs <núcleo> <rom> 4 150 saída.json`). Uma banana mudada de lugar direto na memória não acerta (outros
+dados do objeto não acompanham); a escorregada na banana ainda não foi medida.

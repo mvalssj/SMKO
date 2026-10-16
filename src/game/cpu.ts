@@ -87,6 +87,7 @@ export class CpuDriver {
     k.angle = Math.atan2(next.x - at.x, -(next.y - at.y));
     k.vx = k.vy = k.speed = 0;
     k.fall = k.air = k.spin = 0;
+    k.spinFrom = null;
     k.safe = { x: k.x, y: k.y, angle: k.angle };
   }
 
