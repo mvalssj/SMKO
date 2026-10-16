@@ -532,7 +532,10 @@ async function startRoyale(character: number) {
   const online = await royaleConnect(character, rom!.itemOdds(battleCourse)).catch(() => null);
   await hold(Math.max(0, FADES.toRace.black - (performance.now() - t0) / (1000 / 60)));
   if (online) runRoyaleOnline(world, online);
-  else runRoyaleSolo(world, character);
+  else {
+    runRoyaleSolo(world, character);
+    if (location.protocol !== 'file:') showToast('Sem resposta do servidor: partida só com bots.', 5000);
+  }
   // Let Lakitu show the winner/place briefly, then present the full survival classification.
   let ending = false;
   const check = () => {
@@ -554,7 +557,8 @@ async function royaleConnect(character: number, odds: ReturnType<SmkRom['itemOdd
   const client = new NetClient();
   const timeout = <T>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<never>((_, no) => setTimeout(() => no(new Error('timeout')), ms))]);
   try {
-    await timeout(client.opened, 3000);
+    // (Generous: a busy or slow device, or a server far away, must not end up alone in a match by mistake.)
+    await timeout(client.opened, 10000);
     const started = new Promise<Extract<ServerMsg, { t: 'royaleStart' }>>((resolve, reject) => {
       const off = client.on((m) => {
         if (m.t === 'royaleStart') { off(); resolve(m); }
@@ -563,7 +567,7 @@ async function royaleConnect(character: number, odds: ReturnType<SmkRom['itemOdd
       });
     });
     client.send({ t: 'royaleJoin', romCrc: rom!.crc, character, odds });
-    const msg = await timeout(started, 4000);
+    const msg = await timeout(started, 10000);
     net = client;
     selfId = msg.selfId;
     client.onClose = () => { if (royaleOn) status('results-hint', 'Conexão perdida.'); };

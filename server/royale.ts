@@ -278,12 +278,11 @@ function updateKart(m: Match, p: RPlayer, k: KartNetState) {
     const dist = wrapDist(k.x, k.y, p.kart.x, p.kart.y);
     const rescued = p.kart.f > 0 || k.f > 0;
     if (!rescued && dist > MAX_KART_SPEED * dt + MOVE_SLACK && (p.rejected = (p.rejected ?? 0) + 1) < 10) {
-      // Keep the clock moving even when refusing one bad snapshot. Otherwise that one rejected packet makes
-      // every following, perfectly normal snapshot look farther from the last accepted position and cascades
-      // into enough false warnings to disconnect an honest player.
-      p.lastStateAt = now;
-      // A warning only for a jump far beyond what messages arriving in a bunch (a bad connection) explain.
-      if (p.ws && dist > 2 * (MAX_KART_SPEED * dt + MOVE_SLACK) + 64) adminWarn(p.id, 'speed');
+      // Refused: the kart stays where it was last accepted, and that time stays too, so the allowance grows
+      // with every following snapshot until an honest kart is believed again (and after 10 it is anyway).
+      // Only the first snapshot of such a run may warn: a single jump (a bad connection's bunch of messages)
+      // must not add up to the warnings that disconnect a player automatically.
+      if (p.rejected === 1 && p.ws && dist > 2 * (MAX_KART_SPEED * dt + MOVE_SLACK) + 64) adminWarn(p.id, 'speed');
       return;
     }
     p.rejected = 0;

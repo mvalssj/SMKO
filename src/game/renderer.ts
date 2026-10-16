@@ -88,6 +88,14 @@ const MAP_FOCUS = { x: MAP_PX / 2, y: 984 };
 /** World pixels per screen pixel on the nearest map line. */
 export const MAP_SCALE = floorLine(MAP_VIEW, MAP_BOTTOM - 1)!.across;
 
+/**
+ * Battle Royale's map of the whole world: not the original's camera (the world would be a small patch in the
+ * middle), a lean that fills the map's lines, the world's far edge narrower by WORLD_MAP_TILT, MAP_SCALE_WORLD
+ * world px (per mapZoom) per screen px on the nearest line.
+ */
+export const WORLD_MAP_TILT = 0.7;
+export const MAP_SCALE_WORLD = 4.2;
+
 /** Where a map screen line meets the course (course pixels ahead: its y), and its pixels per screen pixel. */
 export function mapLine(sy: number): { y: number; across: number } | null {
   const l = floorLine(MAP_VIEW, sy);
@@ -275,6 +283,13 @@ void main() {
     vec2 right = vec2(cos(uAngle), sin(uAngle));
     vec2 wp = uCam + fwd * z + right * lateral;
     c = zoned(floorAt(wp), wp);
+  } else if (${full ? 'false' : 'true'} && ${world ? 'true' : 'false'} && sy >= ${MAP_TOP}.0 && sy < ${MAP_BOTTOM}.0) {
+    // The Battle Royale world's map: north up, leaning away, filling the map's lines (WORLD_MAP_TILT).
+    float t = (sy - ${MAP_TOP}.0 + 0.5) / ${MAP_BOTTOM - MAP_TOP}.0;
+    float wy = ${MAP_PX}.0 * uMapZoom * t * (1.0 + ${f(WORLD_MAP_TILT)}) / (1.0 + ${f(WORLD_MAP_TILT)} * t);
+    float scale = ${f(MAP_SCALE_WORLD)} * uMapZoom * (1.0 + ${f(WORLD_MAP_TILT)}) / (1.0 + ${f(WORLD_MAP_TILT)} * t);
+    vec2 mp = uMapOrigin + vec2(${MAP_PX / 2}.0 * uMapZoom + (sx + 0.5 - ${w / 2}.0) * scale, wy);
+    c = zoned(floorMapAt(mp), mp);
   } else if (${full ? 'false' : 'true'} && sy >= ${MAP_TOP}.0 && sy < ${MAP_BOTTOM}.0) {
     // Course map: north up, seen by the original's map camera (MAP_VIEW, mapLine).
     float my = sy - ${f(MAP_VIEW.center)} + 1.0;
@@ -517,7 +532,7 @@ export class Renderer {
     for (const m of this.fullView ? [] : markers) {
       // (In the world, wherever the kart is counted, brought back into the world.)
       const mx = world ? m.x - world.w * Math.floor(m.x / world.w) : m.x, my = world ? m.y - world.h * Math.floor(m.y / world.h) : m.y;
-      const p = mapPoint(mx - this.mapOrigin.x, my - this.mapOrigin.y, this.mapZoom);
+      const p = world ? worldMapPoint(mx - this.mapOrigin.x, my - this.mapOrigin.y, this.mapZoom) : mapPoint(mx - this.mapOrigin.x, my - this.mapOrigin.y, this.mapZoom);
       if (p && (p.x < -8 || p.x > SCREEN_W + 8)) continue;
       if (p) this.hud!.head(m.character, p.x, p.y, m.palette, m.small);
     }
@@ -678,6 +693,15 @@ export function placeMask(table: Uint8Array, n: number, put: (x: number, y: numb
       if ((x >= a && x <= b) !== (x >= c && x <= d)) put(x, PLACE_TOP + i);
     }
   }
+}
+
+/** Where a Battle Royale world position shows on its map (lower screen), or null outside it. */
+export function worldMapPoint(x: number, y: number, zoom: number): { x: number; y: number } | null {
+  const u = y / (MAP_PX * zoom);
+  if (u < 0 || u > 1) return null;
+  const t = u / (1 + WORLD_MAP_TILT - WORLD_MAP_TILT * u);
+  const scale = (MAP_SCALE_WORLD * zoom * (1 + WORLD_MAP_TILT)) / (1 + WORLD_MAP_TILT * t);
+  return { x: SCREEN_W / 2 + (x - (MAP_PX * zoom) / 2) / scale, y: MAP_TOP + t * (MAP_BOTTOM - MAP_TOP) };
 }
 
 /** Where a world position shows on the course map (lower screen), or null outside it. */

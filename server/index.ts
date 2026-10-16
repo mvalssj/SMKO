@@ -467,8 +467,9 @@ function updateKart(r: Room, p: Player, k: KartNetState) {
     const rescued = p.kart.f > 0 || k.f > 0;
     // A kart put back on the course by Lakitu (or a CPU taken back to its path) is accepted after a moment.
     if (!rescued && dist > MAX_KART_SPEED * dt + MOVE_SLACK && (p.rejected = (p.rejected ?? 0) + 1) < 10) {
-      // A warning only for a jump far beyond what messages arriving in a bunch (a bad connection) explain.
-      if (p.ws && dist > 2 * (MAX_KART_SPEED * dt + MOVE_SLACK) + 64) adminWarn(p.id, 'speed');
+      // A warning only for a jump far beyond what messages arriving in a bunch (a bad connection) explain,
+      // and only once for a run of refused snapshots (one jump must not add up to an automatic kick).
+      if (p.rejected === 1 && p.ws && dist > 2 * (MAX_KART_SPEED * dt + MOVE_SLACK) + 64) adminWarn(p.id, 'speed');
       return;
     }
     p.rejected = 0;

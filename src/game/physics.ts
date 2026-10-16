@@ -629,8 +629,10 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     }
   }
 
-  // Track objects.
-  for (let i = 0; i < track.objects.length; i++) {
+  // Track objects (in the Battle Royale world, only those in the cells round the kart: there are hundreds).
+  const objs = track.world ? objectsNear(track, k.x, k.y) : null;
+  for (let j = 0, n = objs ? objs.length : track.objects.length; j < n; j++) {
+    const i = objs ? objs[j] : j;
     const o = track.objects[i];
     const dx = wrapDX(k.x - o.x), dy = wrapDY(k.y - o.y);
     if (dx > OBJECT_HIT_DISTANCE || dx < -OBJECT_HIT_DISTANCE || dy > OBJECT_HIT_DISTANCE || dy < -OBJECT_HIT_DISTANCE) continue;
@@ -726,6 +728,31 @@ function trackProgress(k: Kart, track: Track, geo: RaceGeometry) {
     // Before the first crossing everyone is "behind the line".
     k.progress = k.lap === 0 ? rel - n : (k.lap - 1) * n + rel;
   }
+}
+
+/** The Battle Royale world's objects by 64 px cell (built once per world). */
+const OBJECT_CELL = 64;
+const objectGrids = new WeakMap<Track['objects'], { cols: number; rows: number; cells: Map<number, number[]> }>();
+function objectsNear(track: Track, x: number, y: number): number[] {
+  let g = objectGrids.get(track.objects);
+  const w = track.world!;
+  if (!g) {
+    g = { cols: Math.ceil((w.cols * 8) / OBJECT_CELL), rows: Math.ceil((w.rows * 8) / OBJECT_CELL), cells: new Map() };
+    track.objects.forEach((o, i) => {
+      const key = Math.floor(o.x / OBJECT_CELL) * 4096 + Math.floor(o.y / OBJECT_CELL);
+      const list = g!.cells.get(key);
+      if (list) list.push(i); else g!.cells.set(key, [i]);
+    });
+    objectGrids.set(track.objects, g);
+  }
+  const out: number[] = [];
+  const cx = Math.floor(x / OBJECT_CELL), cy = Math.floor(y / OBJECT_CELL);
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+    const gx = (((cx + dx) % g.cols) + g.cols) % g.cols, gy = (((cy + dy) % g.rows) + g.rows) % g.rows;
+    const list = g.cells.get(gx * 4096 + gy);
+    if (list) for (const i of list) out.push(i);
+  }
+  return out;
 }
 
 export function isInvincible(k: Pick<Kart, 'star' | 'ghost'>): boolean {

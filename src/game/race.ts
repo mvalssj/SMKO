@@ -18,7 +18,7 @@ import { WORLD_H, WORLD_W, insideZone, wrapDX, wrapDY, wrapX, wrapY, type ZoneNo
 import { BotDriver, type Rival } from '../royale/bot';
 import type { RoyaleState } from '../royale/state';
 import { regionAt } from '../royale/world';
-import { CHASE_DISTANCE, MAP_SCALE, PLANET_RADIUS, Renderer, SCREEN_W, type MapMarker, type ObjectSprite, type Sprite } from './renderer';
+import { CHASE_DISTANCE, MAP_SCALE_WORLD, PLANET_RADIUS, Renderer, SCREEN_W, type MapMarker, type ObjectSprite, type Sprite } from './renderer';
 import { PLACE_RED, RaceHud, placeRainbow, type LakituShow } from './hud';
 import { CpuDriver, rubberBand } from './cpu';
 import { objectState } from './objects';
@@ -414,18 +414,21 @@ export class Race {
     const remotes = this.remote.sample();
     const targetPos = (id: number) =>
       id === o.selfId ? k : this.cpus.find((c) => c.id === id)?.kart ?? remotes.find((r) => r.id === id) ?? null;
+    // Our kart and our CPUs: a star or Boo destroys the item without getting hurt (spinOut checks that).
+    const victims: [number | undefined, Kart][] | null = this.entities.size ? [
+      ...(this.out ? [] : [[undefined, k] as [number | undefined, Kart]]),
+      ...this.cpus.filter((c) => !c.out).map((c) => [c.id, c.kart] as [number, Kart]),
+    ] : null;
     for (const e of this.entities.values()) {
       advanceEntity(e, o.track, frame, targetPos);
       if (e.dead) { this.entities.delete(e.id); continue; }
+      if (e.lift > 0) continue;
       const fresh = frame - e.frame < OWNER_GRACE_FRAMES;
-      // Our kart and our CPUs: a star or Boo destroys the item without getting hurt (spinOut checks that).
-      const victims: [number | undefined, Kart][] = [
-        ...(this.out ? [] : [[undefined, k] as [number | undefined, Kart]]),
-        ...this.cpus.filter((c) => !c.out).map((c) => [c.id, c.kart] as [number, Kart]),
-      ];
-      for (const [cpu, v] of victims) {
+      for (const [cpu, v] of victims!) {
         if ((cpu ?? o.selfId) === e.owner && fresh) continue;
-        if (v.air > 0 || v.fall > 0 || e.lift > 0 || near2(e, v) >= ITEM_HIT_DISTANCE) continue;
+        const dx = Math.abs(wrapDX(e.x - v.x)), dy = Math.abs(wrapDY(e.y - v.y));
+        if (dx >= ITEM_HIT_DISTANCE || dy >= ITEM_HIT_DISTANCE) continue;
+        if (v.air > 0 || v.fall > 0 || Math.hypot(dx, dy) >= ITEM_HIT_DISTANCE) continue;
         o.channel.send({ t: 'hit', entity: e.id, cpu });
         this.entities.delete(e.id);
         if (e.kind === 'poison') { if (!isInvincible(v)) v.shrink = SHRINK_FRAMES; }
@@ -440,7 +443,7 @@ export class Race {
         if (c.out || near2(c.kart, k) >= 10 || isInvincible(c.kart) || c.kart.spin > 0) continue;
         if (o.royale) o.channel.send({ t: 'pop', cpu: c.id });
         // (A star's touch spins round as a shell does, a frame longer: measured.)
-spinOut(c.kart, 'star');
+        spinOut(c.kart, 'star');
       }
     }
 
@@ -452,7 +455,7 @@ spinOut(c.kart, 'star');
       if (r.e & EFFECT_STAR && this.starTouchCooldown === 0 && near2(r, k) < 10) {
         if (o.battle && !isInvincible(k)) o.channel.send({ t: 'pop' });
         // (A star's touch spins round as a shell does, a frame longer: measured.)
-spinOut(k, 'star');
+        spinOut(k, 'star');
         this.starTouchCooldown = 60;
       }
     }
@@ -634,7 +637,9 @@ spinOut(k, 'star');
       if (!racing) { countdownInput(k, NO_INPUT, frame); continue; }
       const rolling = now < (c.rollingUntil ?? 0);
       const input = bot.input(k, {
-        frame, zone: zone.now, next: zone.next, nav: royale.nav, rivals: near(k, c.id), boxes: royale.boxes, spawns: royale.spawns,
+        frame, zone: zone.now, next: zone.next, nav: royale.nav, boxes: royale.boxes, spawns: royale.spawns,
+        // (Only looked at when the bot thinks, every few frames: not gathered for every bot every frame.)
+        get rivals() { return near(k, c.id); },
         item: rolling ? null : c.item ?? null,
       });
       const falling = k.fall > 0;
@@ -673,7 +678,7 @@ spinOut(k, 'star');
         if (!(r.e & EFFECT_STAR) || r.f > 0 || isInvincible(k) || k.spin > 0 || near2(r, k) >= 10) continue;
         o.channel.send({ t: 'pop', cpu: c.id });
         // (A star's touch spins round as a shell does, a frame longer: measured.)
-spinOut(k, 'star');
+        spinOut(k, 'star');
       }
       // A star: spin out and pop whoever it touches (other bots here; people check for themselves).
       if (k.star > 0) {
@@ -681,7 +686,7 @@ spinOut(k, 'star');
           if (v === c || v.out || isInvincible(v.kart) || v.kart.spin > 0 || near2(v.kart, k) >= 10) continue;
           o.channel.send({ t: 'pop', cpu: v.id });
           // (A star's touch spins round as a shell does, a frame longer: measured.)
-spinOut(v.kart, 'star');
+          spinOut(v.kart, 'star');
         }
       }
     }
@@ -731,13 +736,15 @@ spinOut(v.kart, 'star');
 
   /**
    * Battle Royale: the course map (lower screen) shows the whole world, so every driver still in is on it:
-   * as wide as the screen on its nearest (widest) line, its south edge on the map's last line.
+   * as wide as the picture on its nearest (widest) line (the widescreen one too), its south edge on the map's
+   * last line. (Called every frame: the picture can change width.)
    */
   private showWorldMap() {
     const w = this.o.royale!.world.world;
     const r = this.o.renderer;
-    r.mapZoom = (w.cols * TILE) / (SCREEN_W * MAP_SCALE);
-    r.mapOrigin = { x: 0, y: w.rows * TILE - MAP_PX * r.mapZoom };
+    r.mapZoom = (w.cols * TILE) / (Math.max(SCREEN_W, r.width) * MAP_SCALE_WORLD);
+    // (Its middle in the middle of the picture: the map puts course x = MAP_PX / 2 there.)
+    r.mapOrigin = { x: (w.cols * TILE) / 2 - (MAP_PX / 2) * r.mapZoom, y: w.rows * TILE - MAP_PX * r.mapZoom };
   }
 
   /** Battle Royale: the little planet's curve on or off (Race.planet). */
@@ -929,6 +936,7 @@ spinOut(v.kart, 'star');
   // ---------- Drawing ----------
 
   private draw(now: number) {
+    if (this.o.royale) this.showWorldMap();
     const o = this.o;
     const remotes = [...this.remote.sample(), ...this.cpus.filter((c) => !c.out).map((c) => netState(c.id, c.kart))]
       .filter((r) => !o.royale || (this.balloons.get(r.id) ?? 1) > 0);
