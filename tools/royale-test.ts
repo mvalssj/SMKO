@@ -96,7 +96,8 @@ const rand = mulberry32(5);
 const geo = raceGeometry(world);
 const bots = Array.from({ length: 99 }, (_, i) => {
   const k = createKart(world, 0, i % 8, 100);
-  const s = st.spawn(i + 1);
+  // Match Race's CPU placement: a bot starts in its driver's region, not on the human arena grid.
+  const s = st.spawn(i + 1, i % 8, true);
   Object.assign(k, { x: s.x, y: s.y, angle: s.angle });
   k.safe = { ...s };
   return { k, d: new BotDriver(world, 1000 + i, 0.6 + rand() * 0.4, rand), falls: 0, dist: 0, px: s.x, py: s.y };
