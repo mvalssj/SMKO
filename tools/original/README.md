@@ -28,6 +28,8 @@ O núcleo não traz nenhum dado do chip DSP-1 e recusa a ROM original. Por isso 
 | `record-item-speed.mjs <núcleo> <rom> <seleção> <item>` | velocidade com um item usado no time trial (`SERIES=1` imprime tudo) |
 | `record-effects.mjs <núcleo> <rom> <item> <saída.json>` | toda a memória $0C00-$1FFF depois de usar o item (contadores dos efeitos) |
 | `dsp-grid.mjs <núcleo> <rom>` | posições dos 8 karts no grid do GP (com o DSP-1 respondido daqui) |
+| `dsp-objects.mjs <núcleo> <rom> <item> <quadros> <saída.json>` | um item lançado na largada: objetos ($1800-$1FFF, a cada $100; x em +$18, y em +$1C) e karts |
+| `tt-start.mjs <núcleo> <rom> <copa> <pista>` | onde o kart larga no time trial |
 
 A seleção é o caminho do cursor na tela de pilotos (TVs: Mario, Peach, Bowser, Koopa / Luigi, Yoshi, DK, Toad):
 `""` Mario, `RR` Bowser, `RRR` Koopa, `DR` Yoshi. Os itens são os números do jogo, na ordem de `ITEM_KINDS`
@@ -38,3 +40,7 @@ O que já foi visto: a velocidade é 1/256 px por quadro (o kart anda exatamente
 grid do GP no Mario Circuit 1 é igual ao nosso. No time trial o kart larga 16 px à frente da pole e um quarto do
 caminho até a segunda fila (medido em 9 pistas; `tt-start` nas medições). No menu do time trial do original, a
 copa se escolhe com ← e ↓ e a pista com → e ↓.
+
+Cascos: andam 768 (3 px) por quadro mais a velocidade do kart que lançou (verde e vermelho, medido com o kart
+parado e a 667). As batidas ainda não acontecem na análise: o jogo descarta os karts das CPUs da tela (não ficam
+no OAM) com a projeção aproximada, e a colisão dos itens parece depender disso.

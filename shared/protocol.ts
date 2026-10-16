@@ -58,6 +58,8 @@ export interface NetEntity {
   frame: number;
   /** Red shells home on this player. */
   target: number | null;
+  /** A shell's speed, px a frame (missing: SHELL_SPEED). */
+  s?: number;
 }
 
 export type EffectKind = 'mushroom' | 'star' | 'feather' | 'ghost' | 'lightning';
@@ -134,7 +136,8 @@ export type ClientMsg =
   /** Drove over a coin (its map tiles). */
   | { t: 'coin'; tiles: number[]; cpu?: number }
   /** Use the held item; `back` throws a shell behind (bananas always go behind). */
-  | { t: 'use'; x: number; y: number; a: number; back: boolean; cpu?: number }
+  /** `s`: the thrower's speed (px a frame): a shell thrown forward goes that much faster. */
+  | { t: 'use'; x: number; y: number; a: number; back: boolean; cpu?: number; s?: number }
   /** This client's kart (or, from the host, CPU `cpu`) was hit by an entity. */
   | { t: 'hit'; entity: number; cpu?: number }
   /** Battle: this player lost a balloon to something that isn't a thrown item (a star kart, a fall). */

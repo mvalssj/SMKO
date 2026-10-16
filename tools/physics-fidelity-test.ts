@@ -125,5 +125,16 @@ for (let c = 0; c < 4; c++) {
   check(max <= 30 && ours.findIndex((h, i) => i > 0 && h === 0) === 36, `pena: arco de 36 quadros, diferença máxima de altura ${(max / 256).toFixed(2)} px`);
 }
 
+// 6. Shells (with the DSP-1 answered by tools/original/dsp-host.mjs): 3 px a frame plus the thrower's speed.
+{
+  const { createEntity } = await import('../src/game/items');
+  const { SHELL_BASE_SPEED } = await import('../shared/items');
+  for (const [what, m] of Object.entries(ref.shell) as [string, { kart: number; shell: number }][]) {
+    const e = createEntity({ id: 1, kind: 'greenShell', owner: 1, x: 0, y: 0, a: 0, frame: 0, target: null, s: SHELL_BASE_SPEED + m.kart / 256 });
+    const ours = Math.hypot(e.vx, e.vy) * 256;
+    check(Math.abs(ours - m.shell) <= 16, `casco (${what}): ${Math.round(ours)} / original ${m.shell} (1/256 px por quadro)`);
+  }
+}
+
 console.log(failed ? 'houve falhas' : 'tudo certo');
 process.exit(failed ? 1 : 0);

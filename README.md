@@ -284,7 +284,7 @@ como reserva:
   velocidade máxima o kart perde no máximo 56 por quadro; estrela dura 512 quadros e leva qualquer kart a
   1280–1314; pena é um arco de 36 quadros e 16 px; Boo deixa o kart invisível por 1152 quadros (medido em 8º
   lugar); o raio deixa os outros pequenos por 157 quadros. Ainda não medidos: rodada (banana/casco), cascos,
-  caixas de item e o item especial de cada CPU. Soltando o acelerador acima da velocidade máxima, só vale a desaceleração normal (16 por quadro acima de 1024).
+  caixas de item e o item especial de cada CPU. Soltando o acelerador acima da velocidade máxima, só vale a desaceleração normal (16 por quadro acima de 1024). Cascos andam 3 px por quadro mais a velocidade de quem lança (era 4,6 fixo).
   Os scripts de medição (emulador à parte, com o DSP-1 respondido pela matemática dos comandos) estão em `tools/original/`.
 - **Som**: o driver de som do próprio jogo (código SPC700 e amostras da ROM, lista de envio em $82:8000; músicas
   por tema carregadas em $D000) roda num emulador de SPC700 + DSP escrito aqui (`src/audio`), num AudioWorklet.

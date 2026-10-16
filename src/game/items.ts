@@ -5,6 +5,7 @@ import type { Track } from '../rom/rom';
 import { terrainAt } from './physics';
 import { wrapDX, wrapDY, wrapX, wrapY } from '../../shared/royale';
 
+/** A shell spawned without its own speed (an older server). */
 const SHELL_SPEED = 4.6;
 /** Bowser's fireballs roll slowly and wander, then burn out. */
 const FIREBALL_SPEED = 0.9;
@@ -26,7 +27,7 @@ export interface Entity extends NetEntity {
 }
 
 export function createEntity(e: NetEntity): Entity {
-  const speed = e.kind === 'greenShell' || e.kind === 'redShell' ? SHELL_SPEED : e.kind === 'fireball' ? FIREBALL_SPEED : 0;
+  const speed = e.kind === 'greenShell' || e.kind === 'redShell' ? e.s ?? SHELL_SPEED : e.kind === 'fireball' ? FIREBALL_SPEED : 0;
   return { ...e, vx: Math.sin(e.a) * speed, vy: -Math.cos(e.a) * speed, at: e.frame, dead: false };
 }
 
@@ -52,16 +53,20 @@ export function advanceEntity(e: Entity, track: Track, frame: number, targetPos:
         let d = want - cur;
         d = Math.atan2(Math.sin(d), Math.cos(d));
         cur += Math.max(-RED_TURN, Math.min(RED_TURN, d));
-        e.vx = Math.sin(cur) * SHELL_SPEED;
-        e.vy = -Math.cos(cur) * SHELL_SPEED;
+        const v = e.s ?? SHELL_SPEED;
+        e.vx = Math.sin(cur) * v;
+        e.vy = -Math.cos(cur) * v;
       }
     }
 
-    // Bounce off walls, one axis at a time.
-    if (terrainAt(track, e.x + e.vx, e.y) === 'wall') e.vx = -e.vx;
-    else e.x += e.vx;
-    if (terrainAt(track, e.x, e.y + e.vy) === 'wall') e.vy = -e.vy;
-    else e.y += e.vy;
+    // Bounce off walls, one axis at a time (fast shells in steps of at most 4 px: no jumping thin walls).
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(e.vx), Math.abs(e.vy)) / 4));
+    for (let i = 0; i < steps; i++) {
+      if (terrainAt(track, e.x + e.vx / steps, e.y) === 'wall') e.vx = -e.vx;
+      else e.x += e.vx / steps;
+      if (terrainAt(track, e.x, e.y + e.vy / steps) === 'wall') e.vy = -e.vy;
+      else e.y += e.vy / steps;
+    }
     // The Battle Royale world wraps round: off one edge, in at the other.
     if (track.world) { e.x = wrapX(e.x); e.y = wrapY(e.y); }
     if (terrainAt(track, e.x, e.y) === 'fall') e.dead = true;

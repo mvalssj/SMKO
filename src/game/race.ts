@@ -382,7 +382,7 @@ export class Race {
     const pressed = !!input.item && !this.itemHeld;
     this.itemHeld = !!input.item;
     if (pressed && racing && this.item && now >= this.rollingUntil && k.fall === 0 && !this.finishedAt && !this.out) {
-      o.channel.send({ t: 'use', x: k.x, y: k.y, a: k.angle, back: input.brake });
+      o.channel.send({ t: 'use', x: k.x, y: k.y, a: k.angle, back: input.brake, s: Math.max(0, k.speed) });
       if (this.item === 'greenShell' || this.item === 'redShell') o.sound?.sfx0(SFX0.shell);
       this.item = null;
     }
@@ -638,7 +638,7 @@ export class Race {
       // Item: use it when the brain says so.
       const use = bot.wantsItem();
       if (use && c.item && !rolling && k.fall === 0) {
-        o.channel.send({ t: 'use', cpu: c.id, x: k.x, y: k.y, a: k.angle, back: use.back });
+        o.channel.send({ t: 'use', cpu: c.id, x: k.x, y: k.y, a: k.angle, back: use.back, s: Math.max(0, k.speed) });
         c.item = null;
       }
       // Boxes and coins in the kart's footprint (the same forgiving pickup as the human player).

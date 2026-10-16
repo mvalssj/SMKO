@@ -8,6 +8,8 @@ import {
 
 export const ROULETTE_MS = 1000;
 export const BOX_RESPAWN_MS = 10_000;
+/** A shell's own speed, px a frame (the thrower's is added): the original's 768 / 256. */
+export const SHELL_BASE_SPEED = 3;
 export const MAX_COINS = 10;
 /** Every Grand Prix race starts with 5 coins (measured: 50cc top speed 823 = 783 + 5 coins x 8). */
 export const START_COINS = 5;
@@ -176,11 +178,16 @@ export class ItemAuthority {
         const behind = kind === 'banana' || msg.back;
         const a = behind && kind !== 'banana' ? msg.a + Math.PI : msg.a;
         const dist = behind ? -14 : 12;
+        // A shell goes 3 px a frame plus the speed of the kart that threw it forward (measured in the original:
+        // 768 + the kart's speed, in 1/256 px). Thrown backwards: 3 (not measured).
+        const thrower = Number.isFinite(msg.s) ? Math.max(0, Math.min(9, msg.s!)) : 0;
+        const shell = kind === 'greenShell' || kind === 'redShell';
         const e: NetEntity = {
           id: this.nextEntity++, kind, owner: id,
           x: msg.x + Math.sin(msg.a) * dist, y: msg.y - Math.cos(msg.a) * dist, a,
           frame: this.frame(),
           target: kind === 'redShell' && !behind ? this.playerAhead(id) : null,
+          ...(shell ? { s: SHELL_BASE_SPEED + (behind ? 0 : thrower) } : {}),
         };
         this.entities.set(e.id, e);
         this.send('all', { t: 'spawn', e });
