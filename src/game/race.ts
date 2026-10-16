@@ -204,7 +204,7 @@ export class Race {
           else if (m.t === 'royaleSwap') this.swapIn(m.bot, m.player);
           else if (m.t === 'break') { applyBreak(o.track, m.tiles); o.renderer.updateTiles(o.track, m.tiles); o.royale.nav.refresh(m.tiles); }
         } else if (m.t === 'balloons') {
-          this.balloons.set(m.id, m.n);
+          // onItemMessage records the count and sound after this listener.
           // Out of balloons: we watch the rest of the battle.
           if (m.id === o.selfId && m.n === 0 && !this.out) { this.out = true; this.o.spectate = true; }
         } else if (m.t === 'cpuHost' && m.id === o.selfId) this.adoptCpus();
@@ -253,6 +253,13 @@ export class Race {
     this.o.sound?.loop(null);
     cancelAnimationFrame(this.raf);
     this.unsubs.forEach((u) => u());
+    // The Royale world is cached between matches. Never leave consumed boxes/coins in that shared map.
+    // Keep this after unsubscribing so a late network update cannot cover the restored tiles again.
+    const tiles = [...this.savedTiles.keys()];
+    if (tiles.length) {
+      restoreTiles(this.o.track, this.savedTiles, tiles);
+      this.o.renderer.updateTiles(this.o.track, tiles);
+    }
   }
 
   /** Frames since the start signal (negative during the countdown). Same on every client. */
@@ -289,10 +296,12 @@ export class Race {
       return;
     }
     switch (m.t) {
-      case 'balloons':
+      case 'balloons': {
+        const previous = this.balloons.get(m.id) ?? BATTLE_BALLOONS;
         this.balloons.set(m.id, m.n);
-        if (m.id === o.selfId && m.n < (this.balloons.get(o.selfId) ?? 99)) o.sound?.sfx0(SFX0.bump);
+        if (m.id === o.selfId && m.n < previous) o.sound?.sfx0(SFX0.bump);
         break;
+      }
       case 'royaleOut': {
         this.balloons.set(m.id, 0);
         this.royaleOut.set(m.id, { place: m.place, timeMs: Math.max(0, Math.round(performance.now() - this.startAt)) });

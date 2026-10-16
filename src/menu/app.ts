@@ -8,6 +8,7 @@ import { MenuAssets } from './assets';
 import { FADES, transition } from '../fade';
 import { cc150Open, specialCupOpen, trialRecord } from './progress';
 import { boardTime } from './results';
+import { animationFrame } from './timing';
 import {
   TV_CHARACTERS, TV_SPRITE_POS, bigSpriteText, buildCupMap, cupBorder, cupTitle, okPrompt, spriteText, tvChosen, tvMarker,
 } from './draw';
@@ -101,9 +102,10 @@ export class MenuApp {
     if (this.visible) return;
     this.visible = true;
     addEventListener('keydown', this.onKey);
-    const loop = () => {
+    const startedAt = performance.now(), initialFrame = this.frame;
+    const loop = (now: number) => {
       this.raf = requestAnimationFrame(loop);
-      this.frame++;
+      this.frame = initialFrame + animationFrame(startedAt, now);
       this.draw();
     };
     this.raf = requestAnimationFrame(loop);

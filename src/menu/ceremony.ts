@@ -8,6 +8,7 @@ import { BG_BACK_W, BG_FRONT_W, BG_HEIGHT, type DriverSprites, type SmkRom, type
 import type { RaceGfx } from '../rom/race-gfx';
 import { Layer } from '../game/layer';
 import { BOARD_NAMES, CUP_NAMES } from './results';
+import { animationFrame, wrapMenuText } from './timing';
 
 const W = 256;
 const H = 224;
@@ -66,9 +67,10 @@ export class Ceremony {
     };
     addEventListener('keydown', key);
     this.unlisten = () => removeEventListener('keydown', key);
-    const loop = () => {
+    const startedAt = performance.now();
+    const loop = (now: number) => {
       this.raf = requestAnimationFrame(loop);
-      frame++;
+      frame = animationFrame(startedAt, now);
       this.sky(track, frame);
       layer.clear();
       this.scene(layer, top, drivers, frame, confetti, lines);
@@ -138,18 +140,20 @@ export class Ceremony {
     // Confetti: the race's sparkle sprites in every palette, falling and drifting.
     if (frame > 160) {
       for (const c of confetti) {
-        c.y += c.v;
-        if (c.y > H) c.y -= H + 20;
+        // Position is derived from time: drawing twice must not advance the particles twice.
+        const travel = c.y + (frame - 160) * c.v;
+        const y = travel <= H ? travel : ((travel + 20) % (H + 20)) - 20;
         const x = (c.x + Math.sin((frame + c.x) / 20) * 6 + W) % W;
-        L.sprite(0x168 + ((frame >> 3) + c.p) % 4, Math.round(x), Math.round(c.y), c.p);
+        L.sprite(0x168 + ((frame >> 3) + c.p) % 4, Math.round(x), Math.round(y), c.p);
       }
     }
     // Closing lines in the menu font.
     if (frame > 300) {
       const c: Rgb[] = [[0, 0, 0], [248, 252, 248], [168, 168, 224], [0, 0, 0]];
-      lines.forEach((text, i) => {
-        const x0 = 16 + 8 * 2;
-        [...text].forEach((ch, j) => L.fontTile(this.gfx.font, menuGlyph(ch), x0 + j * 8, 64 + i * 16, c));
+      const textLines = lines.flatMap((text) => wrapMenuText(text));
+      textLines.forEach((text, i) => {
+        const x0 = Math.floor((W - text.length * 8) / 2);
+        [...text].forEach((ch, j) => L.fontTile(this.gfx.font, menuGlyph(ch), x0 + j * 8, 48 + i * 16, c));
       });
     }
   }

@@ -4,6 +4,7 @@
 import type { DriverSprites, SmkRom } from '../rom/rom';
 import { renderFrame, type Screen } from '../snes/ppu';
 import { ResultsBoards, type Board } from './results';
+import { animationFrame } from './timing';
 
 const W = 256;
 const H = 224;
@@ -34,7 +35,8 @@ export class BoardPlayer {
     this.stop();
     if (!seq.length) { done(); return; }
     this.canvas.hidden = false;
-    let index = 0, shownAt = performance.now(), frame = 0;
+    const startedAt = performance.now();
+    let index = 0, shownAt = startedAt, frame = 0;
     let screen = this.boards.screen(seq[0], 0);
     const next = () => {
       if (index < seq.length - 1) {
@@ -53,7 +55,7 @@ export class BoardPlayer {
     this.unlisten = () => removeEventListener('keydown', key);
     const loop = (now: number) => {
       this.raf = requestAnimationFrame(loop);
-      frame++;
+      frame = animationFrame(startedAt, now);
       if (autoMs && now - shownAt > autoMs && index < seq.length - 1) next();
       this.draw(screen, seq[index], drivers, frame);
     };
