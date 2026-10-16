@@ -44,3 +44,10 @@ copa se escolhe com ← e ↓ e a pista com → e ↓.
 Cascos: andam 768 (3 px) por quadro mais a velocidade do kart que lançou (verde e vermelho, medido com o kart
 parado e a 667). As batidas ainda não acontecem na análise: o jogo descarta os karts das CPUs da tela (não ficam
 no OAM) com a projeção aproximada, e a colisão dos itens parece depender disso.
+
+Com o DSP-1 respondido daqui (incluindo `ADC`/`SBC $6000`, que o jogo usa para somar as projeções às posições e
+o `Raster`, que monta a perspectiva do chão no carregamento: 64 ângulos × 96 linhas da pista, 112 linhas do mapa),
+o jogo original desenha pista, mapa e sprites. O mapa sai igual ao nosso. Na pista, o original desenha os karts
+maiores e as marcas do chão mais espaçadas do que a mesma geometria no nosso jogo: alguma convenção de como o jogo
+usa os números do chip (linha onde começa a tabela do chão, escala M que escolhe o tamanho dos sprites) ainda não
+está certa na emulação; sem o chip verdadeiro não dá para decidir.

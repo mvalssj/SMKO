@@ -44,8 +44,8 @@ export function makeOps() {
       // Where the line of sight meets the ground (z = 0): the screen centre on the floor.
       const t = st.eye[2] / Math.max(1e-6, cZ);
       const cx = st.eye[0] - st.n[0] * t, cy = st.eye[1] - st.n[1] * t;
-      // Screen line of the horizon (rows from the centre).
-      const vva = cZ > 1e-6 ? -les * sZ / cZ : -32768;
+      // Screen line of the horizon (rows from the centre): where a ray runs level with the floor.
+      const vva = sZ > 1e-6 ? -les * cZ / sZ : -32768;
       return [0, clamp16(vva), clamp16(cx), clamp16(cy)];
     },
     0x06: ([x, y, z]) => {
@@ -58,6 +58,18 @@ export function makeOps() {
       return [clamp16(Math.round(h)), clamp16(Math.round(v)), clamp16(Math.round(k * 256))];
     },
   };
+  // Raster: the Mode 7 matrix of screen line Vs (rows from the centre), 8.8: across = the floor's px per screen
+  // px on that line, the step ahead per line = across / cos(zenith); both turned by the azimuth. Then the next line.
+  const line = () => {
+    const { lfe, les, sA, cA, sZ, cZ } = st;
+    const t = (lfe * cZ) / Math.max(1e-6, les * cZ + st.vs * sZ);
+    const t1 = t / Math.max(1e-6, cZ);
+    st.vs++;
+    const s = (v) => clamp16(Math.round(v * 256));
+    return [s(t * cA), s(-t1 * sA), s(t * sA), s(t1 * cA)];
+  };
+  ops[0x0a] = ([vs]) => { st.vs = vs; return st.n ? line() : [0, 0, 0, 0]; };
+  ops.raster = () => (st.n ? line() : [0, 0, 0, 0]);
   ops.st = st;
   return ops;
 }

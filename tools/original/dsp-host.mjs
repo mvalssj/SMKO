@@ -5,10 +5,12 @@
 import { readFileSync } from 'node:fs';
 import { createEmu, withoutDsp } from './host.mjs';
 
-export const KIND = { STA: 1, LDA: 2, STY: 3, LDX: 4, LDY: 5 };
+export const KIND = { STA: 1, LDA: 2, STY: 3, LDX: 4, LDY: 5, ADC: 6, SBC: 7 };
 const SITES = [
   ['STA', [0x8d, 0x00, 0x60]], ['LDA', [0xad, 0x00, 0x60]], ['STA', [0x8f, 0x00, 0x60, 0x00]], ['LDA', [0xaf, 0x00, 0x60, 0x00]],
   ['STY', [0x8c, 0x00, 0x60]], ['LDX', [0xae, 0x00, 0x60]], ['LDY', [0xac, 0x00, 0x60]],
+  // The game also adds the chip's results in (sprite positions): ADC / SBC $6000.
+  ['ADC', [0x6d, 0x00, 0x60]], ['ADC', [0x6f, 0x00, 0x60, 0x00]], ['SBC', [0xed, 0x00, 0x60]],
 ];
 
 export function patchRom(romBytes) {
@@ -50,12 +52,23 @@ export async function createDspEmu(core, romPath, dsp) {
       const pb = M.HEAPU8[wram + ((S + 4) & 0x1fff)];
       const opAt = ((pb & 0x3f) << 16) | ((pc - 1) & 0xffff);
       const kind = rom[opAt];
-      const wide = kind === KIND.STA || kind === KIND.LDA ? !(p & 0x20) : !(p & 0x10);
+      const wide = kind === KIND.STA || kind === KIND.LDA || kind === KIND.ADC || kind === KIND.SBC ? !(p & 0x20) : !(p & 0x10);
       stats.accesses++;
+      if (emu.onAccess) emu.onAccess(kind, opAt, dsp.cmd);
       if (kind === KIND.STA || kind === KIND.STY) {
         const v = M._romdev_getreg(kind === KIND.STA ? 0 : 2);
         dsp.write(v & 0xff);
         if (wide) dsp.write((v >> 8) & 0xff);
+      } else if (kind === KIND.ADC || kind === KIND.SBC) {
+        const lo = dsp.read();
+        const v = wide ? lo | (dsp.read() << 8) : lo;
+        const mask = wide ? 0xffff : 0xff, sign = wide ? 0x8000 : 0x80;
+        const a = M._romdev_getreg(0), av = a & mask, carry = p & 1;
+        const operand = kind === KIND.ADC ? v : ~v & mask;
+        const sum = av + operand + carry, res = sum & mask;
+        const overflow = (~(av ^ operand) & (av ^ res) & sign) !== 0;
+        M._romdev_setreg(0, wide ? res : (a & 0xff00) | res);
+        M.HEAPU8[wram + ((S + 1) & 0x1fff)] = (p & ~0xc3) | (res & sign ? 0x80 : 0) | (overflow ? 0x40 : 0) | (res === 0 ? 0x02 : 0) | (sum > mask ? 0x01 : 0);
       } else {
         const lo = dsp.read();
         const v = wide ? lo | (dsp.read() << 8) : lo;

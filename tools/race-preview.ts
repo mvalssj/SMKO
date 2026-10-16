@@ -9,7 +9,7 @@ import { objectState } from '../src/game/objects';
 import { Layer } from '../src/game/layer';
 import { HORIZON, MAP_BOTTOM, MAP_TOP, RaceHud, SKY_TOP, VIEW_BOTTOM } from '../src/game/hud';
 import {
-  CHASE_DISTANCE, MAP_SCALE, MAP_TILT, VIEW, drawRaceView, floorLine, mapPoint, withRowHeights, type Camera,
+  CHASE_DISTANCE, VIEW, drawRaceView, floorLine, mapLine, mapPoint, withRowHeights, type Camera,
 } from '../src/game/renderer';
 import { Bot } from './bot';
 import { savePng } from './ppu-check';
@@ -56,11 +56,9 @@ function render(frame: number, name: string) {
         const line = floorLine(VIEW, sy)!;
         const z = line.ahead, lat = (sx + 0.5 - 128) * line.across;
         c = floorAt(cam.x + Math.sin(cam.angle) * z + Math.cos(cam.angle) * lat, cam.y - Math.cos(cam.angle) * z + Math.sin(cam.angle) * lat);
-      } else if (sy >= MAP_TOP && sy < MAP_BOTTOM) {
-        const t = (sy - MAP_TOP + 0.5) / (MAP_BOTTOM - MAP_TOP);
-        const wy = MAP_PX * t * (1 + MAP_TILT) / (1 + MAP_TILT * t);
-        const scale = MAP_SCALE * (1 + MAP_TILT) / (1 + MAP_TILT * t);
-        c = floorAt(MAP_PX / 2 + (sx + 0.5 - 128) * scale, wy);
+      } else if (sy >= MAP_TOP && sy < MAP_BOTTOM && mapLine(sy)) {
+        const l = mapLine(sy)!;
+        c = floorAt(MAP_PX / 2 + (sx + 0.5 - 128) * l.across, l.y);
       }
       img.set([c[0], c[1], c[2], 255], (sy * 256 + sx) * 4);
     }

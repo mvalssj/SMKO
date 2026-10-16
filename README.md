@@ -179,6 +179,10 @@ Teste: `npx tsx tools/royale-test.ts "Super Mario Kart (USA).sfc"`. Ele confere 
   256 px (Les 256). O kart fica no meio da imagem (linha 101,6) e o horizonte cai na linha 24, como medido; a pista
   ao longe sai mais longa e larga do que na câmera reta usada antes. A câmera olha na direção do kart do quadro
   anterior (o azimute do DSP-1), sem a virada lenta de antes.
+- **Mapa de baixo = a câmera do mapa do original** (parâmetros do raster do mapa e da projeção das cabeças): 2176 px
+  do ponto olhado (meio do circuito, 984 px para baixo), inclinação 30,94° (zênite 10752), tela a 512 px, esse ponto
+  na linha 214 (a variável $9A do jogo): a borda de perto do circuito cai na linha 219 e a de longe na 128. Com o
+  DSP-1 respondido pela matemática, o próprio jogo original desenha esse mapa igual ao nosso.
 - Tela da corrida 1P como a original (256×224, medida no jogo): faixa do céu nas linhas 3–23, pista em Mode 7 nas
   linhas 24–106 (horizonte na 24, rodas do seu kart na 101), faixa preta e o mapa do circuito inclinado embaixo
   (linhas 115–218) com as cabeças dos pilotos

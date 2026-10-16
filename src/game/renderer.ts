@@ -73,10 +73,26 @@ export function floorLine(v: View, sy: number, curve = 0): { ahead: number; acro
   return { ahead: t * fwd, across: t };
 }
 
-/** Course map (lower screen): the course leans away, so the far edge is narrower. */
-export const MAP_TILT = 0.7;
+/**
+ * Course map (lower screen): the original's camera for it, from its DSP-1 parameters (the map's raster and the
+ * heads' projection): 2176 px from the point it looks at (the course's middle across, 984 px down), tilted
+ * 30.94° (zenith 10752), the screen 512 px away; that point on line 214 (the game's $9A), so the course's
+ * near edge falls on line 219, the bottom of the map, and its far edge on line 128.
+ */
+export const MAP_VIEW: View = (() => {
+  const dist = 2176, pitch = ((90 - (10752 * 360) / 65536) * Math.PI) / 180;
+  return { dist, pitch, focal: 512, center: 214, height: dist * Math.sin(pitch), back: dist * Math.cos(pitch) };
+})();
+/** The point the map camera looks at, in course pixels. */
+const MAP_FOCUS = { x: MAP_PX / 2, y: 984 };
 /** World pixels per screen pixel on the nearest map line. */
-export const MAP_SCALE = 4.2;
+export const MAP_SCALE = floorLine(MAP_VIEW, MAP_BOTTOM - 1)!.across;
+
+/** Where a map screen line meets the course (course pixels ahead: its y), and its pixels per screen pixel. */
+export function mapLine(sy: number): { y: number; across: number } | null {
+  const l = floorLine(MAP_VIEW, sy);
+  return l && { y: MAP_FOCUS.y + MAP_VIEW.back - l.ahead, across: l.across };
+}
 
 export interface Camera {
   x: number;
@@ -260,11 +276,13 @@ void main() {
     vec2 wp = uCam + fwd * z + right * lateral;
     c = zoned(floorAt(wp), wp);
   } else if (${full ? 'false' : 'true'} && sy >= ${MAP_TOP}.0 && sy < ${MAP_BOTTOM}.0) {
-    // Course map: north up, leaning away from the viewer.
-    float t = (sy - ${MAP_TOP}.0 + 0.5) / ${MAP_BOTTOM - MAP_TOP}.0;
-    float wy = ${MAP_PX}.0 * uMapZoom * t * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
-    float scale = ${MAP_SCALE} * uMapZoom * (1.0 + ${MAP_TILT}) / (1.0 + ${MAP_TILT} * t);
-    vec2 mp = uMapOrigin + vec2(${MAP_PX / 2}.0 * uMapZoom + (sx + 0.5 - ${w / 2}.0) * scale, wy);
+    // Course map: north up, seen by the original's map camera (MAP_VIEW, mapLine).
+    float my = sy - ${f(MAP_VIEW.center)} + 1.0;
+    float mdown = ${f(MAP_VIEW.focal * Math.sin(MAP_VIEW.pitch))} + my * ${f(Math.cos(MAP_VIEW.pitch))};
+    float mfwd = ${f(MAP_VIEW.focal * Math.cos(MAP_VIEW.pitch))} - my * ${f(Math.sin(MAP_VIEW.pitch))};
+    float macross = ${f(MAP_VIEW.height)} / mdown;
+    float wy = ${f(MAP_FOCUS.y + MAP_VIEW.back)} - macross * mfwd;
+    vec2 mp = uMapOrigin + vec2(${f(MAP_FOCUS.x)} + (sx + 0.5 - ${w / 2}.0) * macross, wy) * uMapZoom;
     c = zoned(floorMapAt(mp), mp);
   }
   gl_FragColor = vec4(c, 1.0);
@@ -664,11 +682,13 @@ export function placeMask(table: Uint8Array, n: number, put: (x: number, y: numb
 
 /** Where a world position shows on the course map (lower screen), or null outside it. */
 export function mapPoint(x: number, y: number, zoom = 1): { x: number; y: number } | null {
-  const u = y / (MAP_PX * zoom);
-  if (u < 0 || u > 1) return null;
-  const t = u / (1 + MAP_TILT - MAP_TILT * u);
-  const scale = (MAP_SCALE * zoom * (1 + MAP_TILT)) / (1 + MAP_TILT * t);
-  return { x: SCREEN_W / 2 + (x - (MAP_PX * zoom) / 2) / scale, y: MAP_TOP + t * (MAP_BOTTOM - MAP_TOP) };
+  const cx = x / zoom, cy = y / zoom;
+  if (cy < 0 || cy > MAP_PX) return null;
+  const v = MAP_VIEW, s = Math.sin(v.pitch), c = Math.cos(v.pitch);
+  const ahead = MAP_FOCUS.y + v.back - cy;
+  const depth = ahead * c + v.height * s;
+  if (depth <= 0) return null;
+  return { x: SCREEN_W / 2 + (v.focal * (cx - MAP_FOCUS.x)) / depth, y: v.center - 1 + (v.focal * (v.height * c - ahead * s)) / depth };
 }
 
 export function withRowHeights(sprites: DriverSprites): DriverFrames {
