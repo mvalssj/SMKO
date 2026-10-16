@@ -35,4 +35,6 @@ A seleção é o caminho do cursor na tela de pilotos (TVs: Mario, Peach, Bowser
 kart em `$0D70` com `$0D71 = $C0`.
 
 O que já foi visto: a velocidade é 1/256 px por quadro (o kart anda exatamente isso com o DSP-1 respondido) e o
-grid do GP no Mario Circuit 1 é igual ao nosso. No time trial o original larga em (928, 572), o nosso em (920, 588).
+grid do GP no Mario Circuit 1 é igual ao nosso. No time trial o kart larga 16 px à frente da pole e um quarto do
+caminho até a segunda fila (medido em 9 pistas; `tt-start` nas medições). No menu do time trial do original, a
+copa se escolhe com ← e ↓ e a pista com → e ↓.

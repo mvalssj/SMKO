@@ -184,7 +184,7 @@ async function startSolo(choice: { mode: 'gp' | 'tt'; cc: Cc; character: number;
   const me: PlayerInfo = { id: 1, name: CHARACTER_NAMES[choice.character], character: choice.character, ready: true };
   if (choice.mode === 'tt') {
     gp = null;
-    runSoloRace(choice.tracks[0], choice.cc, [me], [], false);
+    runSoloRace(choice.tracks[0], choice.cc, [me], [], false, 0, undefined, true);
     return;
   }
   const cpus: PlayerInfo[] = CHARACTER_NAMES.map((name, c) => ({ id: CPU_ID_BASE + c, name, character: c, ready: true, cpu: true }))
@@ -203,12 +203,16 @@ function nextGpRace() {
   runSoloRace(g.tracks[g.round], g.cc, g.players, cpus.map((c) => ({ id: c.id, slot: ids.indexOf(c.id), skill: 0.55 + Math.random() * 0.45 })), true, ids.indexOf(1), g.lives);
 }
 
-function runSoloRace(track: TrackInfo, cc: Cc, players: PlayerInfo[], cpus: { id: number; slot: number; skill: number }[], items: boolean, slot = 0, lives?: number) {
+function runSoloRace(track: TrackInfo, cc: Cc, players: PlayerInfo[], cpus: { id: number; slot: number; skill: number }[], items: boolean, slot = 0, lives?: number, trial = false) {
   solo?.close();
   solo = new LocalChannel(1, rom!.itemOdds(track), COUNTDOWN_MS, cpus.map((c) => c.id));
   lastTrack = track;
   lastCc = cc;
-  startRace({ track: rom!.loadTrack(track), cc, players, cpus, items, selfId: 1, slot, startInMs: COUNTDOWN_MS, online: false, lives });
+  const t = rom!.loadTrack(track);
+  // Time trial, alone: the original puts the kart 16 px ahead of pole, a quarter of the way to the second row
+  // (measured on 9 courses).
+  const start = trial && t.start ? { x: t.start.x + t.start.secondRowOffset / 4, y: t.start.y - 16, a: 0 } : undefined;
+  startRace({ track: t, cc, players, cpus, items, selfId: 1, slot, startInMs: COUNTDOWN_MS, online: false, lives, start });
   const check = () => {
     if (!race || net) return;
     if (!race.finished) { setTimeout(check, 250); return; }
