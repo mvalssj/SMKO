@@ -6,7 +6,15 @@ import {
   type ClientMsg, type EntityKind, type ItemKind, type ItemOdds, type NetEntity, type ServerMsg,
 } from './protocol';
 
-export const ROULETTE_MS = 1000;
+/**
+ * The roulette, measured in the original: it spins until the item button is pressed (it stops 3 frames later)
+ * or for 201 frames at most; the item it stopped on can be used 65 frames after that.
+ */
+export const ROULETTE_SPIN_MS = (201 * 1000) / 60;
+export const ROULETTE_STOP_MS = (3 * 1000) / 60;
+export const ROULETTE_SHOW_MS = (65 * 1000) / 60;
+/** From the box to the item in hand when nobody stops it. */
+export const ROULETTE_MS = ROULETTE_SPIN_MS + ROULETTE_SHOW_MS;
 export const BOX_RESPAWN_MS = 10_000;
 /** A shell's own speed, px a frame (the thrower's is added): the original's 768 / 256. */
 export const SHELL_BASE_SPEED = 3;
@@ -77,7 +85,7 @@ export class ItemAuthority {
   /** Handles item messages from a player; returns false for anything else. */
   handle(id: number, msg: ClientMsg): boolean {
     // CPUs' hits (and Battle Royale bots' boxes, coins and items) come from whoever simulates them.
-    if ((msg.t === 'hit' || msg.t === 'box' || msg.t === 'coin' || msg.t === 'use') && msg.cpu !== undefined) id = msg.cpu;
+    if ((msg.t === 'hit' || msg.t === 'box' || msg.t === 'coin' || msg.t === 'use' || msg.t === 'stopRoll') && msg.cpu !== undefined) id = msg.cpu;
     const p = this.players.get(id);
     if (!p) return false;
     switch (msg.t) {
@@ -85,6 +93,10 @@ export class ItemAuthority {
       case 'coin': this.onCoin(id, p, msg.tiles); return true;
       case 'use': this.onUse(id, p, msg); return true;
       case 'hit': this.hitEntity(id, msg.entity); return true;
+      case 'stopRoll':
+        // Still spinning: stops, the item ready a moment later.
+        if (p.rolled && this.now() < p.rollingUntil - ROULETTE_SHOW_MS) p.rollingUntil = this.now() + ROULETTE_STOP_MS + ROULETTE_SHOW_MS;
+        return true;
       default: return false;
     }
   }
@@ -132,6 +144,8 @@ export class ItemAuthority {
   }
 
   private onUse(id: number, p: PlayerItems, msg: Extract<ClientMsg, { t: 'use' }>) {
+    // (The roulette's end may come between two ticks: a use right on time is a use.)
+    if (p.rolled && this.now() >= p.rollingUntil - 150) { p.item = p.rolled; p.rolled = null; }
     if (!p.item || p.rolled) { this.onReject?.(id, 'item'); return; }
     if (![msg.x, msg.y, msg.a].every(Number.isFinite)) return;
     const item = p.item;

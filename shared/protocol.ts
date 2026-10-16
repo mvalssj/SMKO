@@ -138,6 +138,8 @@ export type ClientMsg =
   /** Use the held item; `back` throws a shell behind (bananas always go behind). */
   /** `s`: the thrower's speed (px a frame): a shell thrown forward goes that much faster. */
   | { t: 'use'; x: number; y: number; a: number; back: boolean; cpu?: number; s?: number }
+  /** The item button pressed while the roulette spins: it stops (as in the original). */
+  | { t: 'stopRoll'; cpu?: number }
   /** This client's kart (or, from the host, CPU `cpu`) was hit by an entity. */
   | { t: 'hit'; entity: number; cpu?: number }
   /** Battle: this player lost a balloon to something that isn't a thrown item (a star kart, a fall). */

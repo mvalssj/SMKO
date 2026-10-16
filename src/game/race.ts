@@ -5,7 +5,7 @@ import {
   BATTLE_BALLOONS, CHARACTER_NAMES, EFFECT_BOOST, EFFECT_GHOST, EFFECT_SHRUNK, EFFECT_STAR, ITEM_KINDS, NET_HZ, TOTAL_LAPS,
   CPU_SPECIAL, type Cc, type EntityKind, type ItemKind, type KartNetState, type PlayerInfo, type ServerMsg,
 } from '../../shared/protocol';
-import { ROULETTE_MS, START_COINS } from '../../shared/items';
+import { ROULETTE_MS, ROULETTE_SHOW_MS, ROULETTE_SPIN_MS, ROULETTE_STOP_MS, START_COINS } from '../../shared/items';
 import { CHARACTERS, Genre, MAP_PX, TILE, type DriverSprites, type ItemGraphics, type SpriteFrame, type Track } from '../rom/rom';
 import { RemoteKarts, type NetClient } from '../net/client';
 import type { Channel } from '../net/local';
@@ -138,6 +138,8 @@ export class Race {
 
   private item: ItemKind | null = null;
   private rollingUntil = 0;
+  /** When the item from the last box can be used (the roulette's end and its show). */
+  private readyAt = 0;
   private itemHeld = false;
   private pickupCooldown = 0;
   private starTouchCooldown = 0;
@@ -326,7 +328,9 @@ export class Race {
         break;
       case 'item':
         this.item = m.item;
-        this.rollingUntil = m.roll ? performance.now() + ROULETTE_MS : 0;
+        // The roulette spins (rollingUntil), then shows the item a moment before it can be used (readyAt).
+        this.rollingUntil = m.roll ? performance.now() + ROULETTE_SPIN_MS : 0;
+        this.readyAt = m.roll ? this.rollingUntil + ROULETTE_SHOW_MS : 0;
         break;
       case 'coins':
         if (m.coins > k.coins) o.sound?.sfx0(SFX0.coin);
@@ -378,10 +382,14 @@ export class Race {
     const k = this.kart;
     const frame = this.raceFrame(now);
 
-    // Use the held item on button press (not while it's still rolling).
+    // Use the held item on button press (not while it's still rolling); pressed while it spins, it stops.
     const pressed = !!input.item && !this.itemHeld;
     this.itemHeld = !!input.item;
-    if (pressed && racing && this.item && now >= this.rollingUntil && k.fall === 0 && !this.finishedAt && !this.out) {
+    if (pressed && racing && this.item && now < this.rollingUntil) {
+      this.rollingUntil = now + ROULETTE_STOP_MS;
+      this.readyAt = this.rollingUntil + ROULETTE_SHOW_MS;
+      o.channel.send({ t: 'stopRoll' });
+    } else if (pressed && racing && this.item && now >= this.readyAt && k.fall === 0 && !this.finishedAt && !this.out) {
       o.channel.send({ t: 'use', x: k.x, y: k.y, a: k.angle, back: input.brake, s: Math.max(0, k.speed) });
       if (this.item === 'greenShell' || this.item === 'redShell') o.sound?.sfx0(SFX0.shell);
       this.item = null;
@@ -393,7 +401,7 @@ export class Race {
     if (o.items && racing && k.air === 0 && k.fall === 0 && this.pickupCooldown === 0 && !this.out) {
       const box = pickupTile(o.track, k.x, k.y, Genre.ItemBlock);
       const coin = box ? null : pickupTile(o.track, k.x, k.y, Genre.Coin);
-      if (box && !this.item && now >= this.rollingUntil) {
+      if (box && !this.item && now >= this.readyAt) {
         o.channel.send({ t: 'box', tiles: tileCluster(o.track, box.tx, box.ty, Genre.ItemBlock, 2) });
         this.pickupCooldown = 20;
       } else if (coin) {

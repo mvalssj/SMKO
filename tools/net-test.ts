@@ -25,7 +25,7 @@ function client(n: number): Promise<{ name: string; results?: unknown }> {
     const ws = new WebSocket(URL_);
     const send = (m: object) => ws.send(JSON.stringify(m));
     let id = 0, seenOthers = 0, broken = 0;
-    let item: string | null = null, heldAt = 0, boxCooldown = 0;
+    let item: string | null = null, heldAt = 0, boxCooldown = 0, stoppedAt = 0;
     let timer: ReturnType<typeof setInterval> | null = null;
     const entities = new Map<number, Entity>();
     ws.on('error', reject);
@@ -40,7 +40,7 @@ function client(n: number): Promise<{ name: string; results?: unknown }> {
       }
       if (m.t === 'states') seenOthers = Math.max(seenOthers, m.karts.filter((k) => k.id !== id).length);
       if (m.t === 'break') broken += m.tiles.length;
-      if (m.t === 'item') { item = m.item; heldAt = Date.now(); if (m.item && m.roll) stats.items.set(m.item, (stats.items.get(m.item) ?? 0) + 1); }
+      if (m.t === 'item') { item = m.item; heldAt = Date.now(); stoppedAt = 0; if (m.item && m.roll) stats.items.set(m.item, (stats.items.get(m.item) ?? 0) + 1); }
       if (m.t === 'spawn') { entities.set(m.e.id, createEntity(m.e)); if (n === 0) stats.spawns++; }
       if (m.t === 'despawn') entities.delete(m.id);
       if (m.t === 'effect' && n === 0) stats.effects++;
@@ -70,7 +70,9 @@ function client(n: number): Promise<{ name: string; results?: unknown }> {
             if (!item && boxCooldown === 0 && track.genres[ty * 128 + tx] === Genre.ItemBlock) {
               send({ t: 'box', tiles: tileCluster(track, tx, ty, Genre.ItemBlock, 2) }); boxCooldown = 30; stats.boxes++;
             }
-            if (item && Date.now() - heldAt > 1300) { send({ t: 'use', x: k.x, y: k.y, a: k.angle, back: false }); item = null; }
+            // The roulette: stop it after half a second (as a player would), use the item once it is ready.
+            if (item && !stoppedAt && Date.now() - heldAt > 500) { send({ t: 'stopRoll' }); stoppedAt = Date.now(); }
+            if (item && stoppedAt && Date.now() - stoppedAt > 1400) { send({ t: 'use', x: k.x, y: k.y, a: k.angle, back: false }); item = null; }
             const serverFrame = Math.floor((Date.now() - t0) / (1000 / 60));
             for (const e of entities.values()) {
               advanceEntity(e, track, serverFrame, () => null);

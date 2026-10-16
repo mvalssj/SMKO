@@ -97,7 +97,8 @@ export function royaleMessage(ws: WebSocket, id: number, msg: ClientMsg): boolea
       break;
     case 'box':
     case 'coin':
-    case 'use': {
+    case 'use':
+    case 'stopRoll': {
       if (!racing) break;
       if (msg.cpu !== undefined && bot(msg.cpu) === null) break;
       if (msg.cpu === undefined && !(m.royale.balloons.get(id)! > 0)) break;

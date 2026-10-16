@@ -153,5 +153,14 @@ for (let c = 0; c < 4; c++) {
   check(k.speed === 0 && same >= 110 && Math.abs(turnsO - 6) < 0.1 && turnsU === 6, `rodada do casco: ${same} de 120 quadros com o mesmo giro, ${turnsO.toFixed(2)} voltas no original, kart parado e de volta à direção`);
 }
 
+// 8. The roulette (an item box on Mario Circuit 1, held item $0D70/$0D71): spins 201 frames or until the button
+// (3 frames later), the item usable 65 frames after it stops.
+{
+  const { ROULETTE_SPIN_MS, ROULETTE_STOP_MS, ROULETTE_SHOW_MS } = await import('../shared/items');
+  const fr = (ms: number) => Math.round((ms * 60) / 1000);
+  check(fr(ROULETTE_SPIN_MS) === ref.roulette.spinFrames && fr(ROULETTE_STOP_MS) === ref.roulette.stopFrames && fr(ROULETTE_SHOW_MS) === ref.roulette.showFrames,
+    `roleta: ${fr(ROULETTE_SPIN_MS)} quadros girando, para ${fr(ROULETTE_STOP_MS)} depois do botão, item pronto ${fr(ROULETTE_SHOW_MS)} depois`);
+}
+
 console.log(failed ? 'houve falhas' : 'tudo certo');
 process.exit(failed ? 1 : 0);

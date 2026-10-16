@@ -196,6 +196,7 @@ wss.on('connection', (ws, req) => {
       case 'box':
       case 'coin':
       case 'use':
+      case 'stopRoll':
         if (r.phase === 'racing' && me.finishMs === null) r.items?.handle(id, msg);
         break;
 
