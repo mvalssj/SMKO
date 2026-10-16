@@ -11,7 +11,7 @@ import { RemoteKarts, type NetClient } from '../net/client';
 import type { Channel } from '../net/local';
 import { readInput } from './input';
 import {
-  CHARACTER_CLASS, KART_CLASSES, NO_INPUT, STEP_MS, applyBreak, countdownInput, coverTiles, createKart, featherJump, isInvincible,
+  CHARACTER_CLASS, DASH_FRAMES, KART_CLASSES, NO_INPUT, STEP_MS, applyBreak, countdownInput, coverTiles, createKart, featherJump, isInvincible,
   isBoosting, kartFacing, kartHeight, raceGeometry, terrainAt, restoreTiles, spinOut, stepKart, tileCluster, type Bumper, type Input, type Kart, type SavedTile,
 } from './physics';
 import { WORLD_H, WORLD_W, insideZone, wrapDX, wrapDY, wrapX, wrapY, type ZoneNow } from '../../shared/royale';
@@ -25,9 +25,13 @@ import { objectState } from './objects';
 import { ITEM_HIT_DISTANCE, OWNER_GRACE_FRAMES, advanceEntity, createEntity, type Entity } from './items';
 import { LOOP, MUSIC, SFX0, type Sound } from '../audio/sound';
 
-const STAR_FRAMES = 60 * 8;
-const GHOST_FRAMES = 60 * 5;
-const SHRINK_FRAMES = 60 * 5;
+/**
+ * Item effects, measured in the original (kart RAM, 8th place): star 512 frames; Boo (invisible) 1152; a
+ * lightning bolt leaves the others small for 157 frames (5 shrinking, about 130 small, 21 growing back).
+ */
+const STAR_FRAMES = 512;
+const GHOST_FRAMES = 1152;
+const SHRINK_FRAMES = 157;
 
 export interface RaceOptions {
   track: Track;
@@ -341,7 +345,7 @@ export class Race {
         break;
       case 'effect':
         if (m.id === o.selfId) {
-          if (m.kind === 'mushroom') { k.boost = 60; o.sound?.sfx0(SFX0.mushroom); }
+          if (m.kind === 'mushroom') { k.dash = DASH_FRAMES; o.sound?.sfx0(SFX0.mushroom); }
           else if (m.kind === 'star') k.star = STAR_FRAMES;
           else if (m.kind === 'feather') { featherJump(k); o.sound?.sfx0(SFX0.featherJump); }
           else if (m.kind === 'ghost') { k.ghost = GHOST_FRAMES; o.sound?.sfx0(SFX0.boo); }
@@ -359,7 +363,7 @@ export class Race {
           // One of our bots used an item on itself.
           const c = this.cpus.find((x) => x.id === m.id);
           if (c?.bot) {
-            if (m.kind === 'mushroom') c.kart.boost = 60;
+            if (m.kind === 'mushroom') c.kart.dash = DASH_FRAMES;
             else if (m.kind === 'star') c.kart.star = STAR_FRAMES;
             else if (m.kind === 'feather') featherJump(c.kart);
             else if (m.kind === 'ghost') c.kart.ghost = GHOST_FRAMES;

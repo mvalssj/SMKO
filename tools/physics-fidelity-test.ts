@@ -4,7 +4,9 @@
 // Usage: npx tsx tools/physics-fidelity-test.ts
 import { readFileSync } from 'node:fs';
 import { Genre, type Track } from '../src/rom/rom';
-import { CC_TOP, KART_CLASSES, NO_INPUT, createKart, kartFacing, raceGeometry, stepKart, type Input } from '../src/game/physics';
+import {
+  CC_TOP, DASH_FRAMES, KART_CLASSES, NO_INPUT, createKart, featherJump, kartFacing, kartHeight, raceGeometry, stepKart, type Input, type Kart,
+} from '../src/game/physics';
 
 const ref = JSON.parse(readFileSync(new URL('./ref/original-physics.json', import.meta.url), 'utf8'));
 let failed = false;
@@ -74,6 +76,38 @@ for (let c = 0; c < 4; c++) {
   let same = 0, total = 0;
   for (let i = 500; i < orig.length; i++) { total++; if (wrap(ours[i] - ours[i - 1]) === wrap(orig[i] - orig[i - 1])) same++; }
   check(same / total >= 0.98, `direção ${NAMES[c]}: ${same} de ${total} quadros com a mesma virada do original`);
+}
+
+// 5. Items (100cc time trial, the item used on a straight at top speed): the speed frame by frame from the
+// press of the item button.
+for (let c = 0; c < 4; c++) {
+  for (const [what, orig, give, n] of [['cogumelo', ref.mushroom[c], (k: Kart) => { k.dash = DASH_FRAMES; }, 100], ['estrela', ref.star[c], (k: Kart) => { k.star = 512; }, 560]] as const) {
+    const k = createKart(flat, 0, DRIVER[c], 100);
+    k.speed = orig[0] / 256; k.vy = -k.speed;
+    const ours: number[] = [orig[0]];
+    let f = 0;
+    give(k);
+    for (let i = 1; i < n; i++) {
+      stepKart(k, { ...NO_INPUT, accel: true }, flat, geo, [], f++);
+      ours.push(Math.round(k.speed * 256));
+    }
+    let max = 0, sum = 0;
+    for (let i = 0; i < n; i++) { const d = Math.abs(ours[i] - orig[i]); max = Math.max(max, d); sum += d; }
+    // (Bowser, DK, Peach and Yoshi's mushroom goes a little over 2016 on its last 2 frames in the original: not done.)
+    check(sum / n <= (what === 'estrela' ? 9 : c === 1 || c === 2 ? 30 : 4), `${what} ${NAMES[c]}: diferença média ${(sum / n).toFixed(1)}, máxima ${max} (pico ${Math.max(...orig)} / ${Math.max(...ours)})`);
+  }
+}
+// The feather's arc: height frame by frame (1/256 px).
+{
+  const k = createKart(flat, 0, 0, 50);
+  k.speed = 811 / 256; k.vy = -k.speed;
+  featherJump(k);
+  const ours: number[] = [];
+  for (let i = 0; i < 37; i++) { ours.push(Math.round(kartHeight(k) * 256)); stepKart(k, { ...NO_INPUT, accel: true }, flat, geo, [], i); }
+  const orig: number[] = ref.feather;
+  let max = 0;
+  for (let i = 0; i < 37; i++) max = Math.max(max, Math.abs(ours[i] - orig[i]));
+  check(max <= 30 && ours.findIndex((h, i) => i > 0 && h === 0) === 36, `pena: arco de 36 quadros, diferença máxima de altura ${(max / 256).toFixed(2)} px`);
 }
 
 console.log(failed ? 'houve falhas' : 'tudo certo');

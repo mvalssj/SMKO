@@ -449,7 +449,8 @@ function tick(r: Room) {
 }
 
 /** Fastest a kart can really move (px per second: boosts, ramps), and slack for network jitter. */
-const MAX_KART_SPEED = 420;
+// px per second: a mushroom pushes a kart to 2016 game units (about 8 px a frame), a little over it for some.
+const MAX_KART_SPEED = 560;
 const MOVE_SLACK = 48;
 
 function updateKart(r: Room, p: Player, k: KartNetState) {

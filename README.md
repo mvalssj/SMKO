@@ -278,6 +278,13 @@ como reserva:
   e frear 12/9/7/4 por quadro conforme a faixa de velocidade; a curva desfaz 14/17/16/18 por quadro ao soltar; a
   carroceria começa a balançar no 5º/2º/2º/3º quadro da curva e treme um passo para cada lado como no original; o
   kart responde ao controle um quadro depois, como o jogo (lido no retraço vertical).
+- **Itens medidos no original** (o item colocado na mão do kart, `$0D70`, e usado; no mesmo teste): cogumelo
+  empurra +50 por quadro além da aceleração do kart por 33 quadros, até 2016 (cerca de 8 px por quadro; Bowser/DK
+  e Peach/Yoshi passam um pouco disso nos 2 últimos quadros no original, o que ainda não é reproduzido); acima da
+  velocidade máxima o kart perde no máximo 56 por quadro; estrela dura 512 quadros e leva qualquer kart a
+  1280–1314; pena é um arco de 36 quadros e 16 px; Boo deixa o kart invisível por 1152 quadros (medido em 8º
+  lugar); o raio deixa os outros pequenos por 157 quadros. Ainda não medidos: rodada (banana/casco), cascos,
+  caixas de item e o item especial de cada CPU.
 - **Som**: o driver de som do próprio jogo (código SPC700 e amostras da ROM, lista de envio em $82:8000; músicas
   por tema carregadas em $D000) roda num emulador de SPC700 + DSP escrito aqui (`src/audio`), num AudioWorklet.
   Portas: 0 = música, 1 = efeitos, 2/3 = motor. Tecla N liga/desliga.

@@ -24,7 +24,8 @@ const FAR_EVERY = 5;
 const JOIN_UNTIL_PHASE = 3;
 /** A finished match stays a little (the last results), then goes. */
 const OVER_KEEP_MS = 30_000;
-const MAX_KART_SPEED = 420;
+// px per second: a mushroom pushes a kart to 2016 game units (about 8 px a frame), a little over it for some.
+const MAX_KART_SPEED = 560;
 const MOVE_SLACK = 48;
 
 interface RPlayer {

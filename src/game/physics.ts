@@ -48,6 +48,8 @@ export interface KartClass {
   driftSkid: number;
   /** Frames into a fast turn (or a power slide) before the body starts to swing out. */
   skidDelay: number;
+  /** With a star: speed gained per frame at 100cc (game units; 0.25 less at 50cc, measured). */
+  starAccel: number;
   /** Kart-to-kart bumps: heavier karts push lighter ones. */
   weight: number;
 }
@@ -55,19 +57,19 @@ export interface KartClass {
 export const KART_CLASSES: KartClass[] = [
   { // Mario, Luigi
     accel: [2, 6, 4, 8, 12, 12, 12, 8, 8, 4, 2, 1.5, 1, 0.5, 0.5, 0.5],
-    top: 912, offroad: 580, turnAcc: 13, turnMax: 306, turnRelease: 14, slideAcc: 17, slideMax: 352, skid: 8496, driftSkid: 10496, skidDelay: 5, weight: 2,
+    top: 912, offroad: 580, turnAcc: 13, turnMax: 306, turnRelease: 14, slideAcc: 17, slideMax: 352, skid: 8496, driftSkid: 10496, skidDelay: 5, starAccel: 2.25, weight: 2,
   },
   { // Bowser, DK Jr.
     accel: [2, 2, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 1, 0.5, 0.5, 0.5],
-    top: 944, offroad: 610, turnAcc: 11, turnMax: 288, turnRelease: 17, slideAcc: 15, slideMax: 344, skid: 8496, driftSkid: 10496, skidDelay: 2, weight: 3,
+    top: 944, offroad: 610, turnAcc: 11, turnMax: 288, turnRelease: 17, slideAcc: 15, slideMax: 344, skid: 8496, driftSkid: 10496, skidDelay: 2, starAccel: 2.5, weight: 3,
   },
   { // Peach, Yoshi
     accel: [4, 12, 16, 16, 12, 12, 12, 8, 8, 4, 4, 2, 0.5, 0.25, 0.25, 0.25],
-    top: 880, offroad: 620, turnAcc: 11, turnMax: 306, turnRelease: 16, slideAcc: 14, slideMax: 352, skid: 8496, driftSkid: 10496, skidDelay: 2, weight: 1,
+    top: 880, offroad: 620, turnAcc: 11, turnMax: 306, turnRelease: 16, slideAcc: 14, slideMax: 352, skid: 8496, driftSkid: 10496, skidDelay: 2, starAccel: 2.25, weight: 1,
   },
   { // Koopa, Toad
     accel: [4, 4, 6, 8, 8, 12, 12, 8, 8, 4, 2, 1.5, 1, 0.64, 0.5, 0.5],
-    top: 864, offroad: 635, turnAcc: 14, turnMax: 288, turnRelease: 18, slideAcc: 18, slideMax: 344, skid: 4464, driftSkid: 10496, skidDelay: 3, weight: 1,
+    top: 864, offroad: 635, turnAcc: 14, turnMax: 288, turnRelease: 18, slideAcc: 18, slideMax: 344, skid: 4464, driftSkid: 10496, skidDelay: 3, starAccel: 2.5, weight: 1,
   },
 ];
 
@@ -90,6 +92,23 @@ const MT_DELAY = 48;
 const MT_FRAMES = 46;
 const MT_ACCEL = 2.25;
 const HOP_FRAMES = 17;
+/**
+ * Measured in the original (kart RAM, the item put in the held slot and used): a mushroom pushes the speed up
+ * 50 a frame on top of the kart's own acceleration for 33 frames (its timer, 31, and the 2 frames it takes to
+ * start), to 2016 at most (Bowser, DK, Peach and Yoshi go up to 100 over it on its last 2 frames: not done
+ * here, the rule isn't known); with a star the kart climbs a little each frame to 1312 and drops back 32 each
+ * time it passes it (1280-1314, whatever the kart); above top speed it slows down by at most 56
+ * a frame; the feather's jump is a 36-frame arc (rising 454 a frame at first, 26 less each frame: 16 px high).
+ */
+export const DASH_FRAMES = 33;
+const DASH_ACCEL = 50;
+const DASH_MAX = 2016;
+const STAR_TOP = 1312;
+const STAR_DROP = 32;
+const EXCESS_MAX_DROP = 56;
+export const FEATHER_FRAMES = 36;
+const FEATHER_RISE = 454;
+const FEATHER_FALL = 26;
 /** Speed above which a held turn makes the kart body swing out (skid). */
 const SKID_SPEED = 600;
 
@@ -109,6 +128,10 @@ export interface Kart {
   airTotal: number;
   /** Item effects, in frames left. */
   star: number;
+  /** Mushroom push frames left (zipper panels still use `boost`). */
+  dash: number;
+  /** In the air from a feather (its own arc). */
+  feather: boolean;
   ghost: number;
   shrink: number;
   /** 0-10; each coin raises top speed a little. */
@@ -266,7 +289,7 @@ export function gridPosition(track: Track, slot: number): { x: number; y: number
 export function createKart(track: Track, slot: number, character = 0, cc: 50 | 100 | 150 = 100): Kart {
   const g = gridPosition(track, slot);
   const kart: Kart = {
-    x: g.x, y: g.y, angle: g.angle, vx: 0, vy: 0, speed: 0, boost: 0, spin: 0, fall: 0, air: 0, airTotal: 0, star: 0, ghost: 0, shrink: 0, coins: 0, speedScale: 1,
+    x: g.x, y: g.y, angle: g.angle, vx: 0, vy: 0, speed: 0, boost: 0, spin: 0, fall: 0, air: 0, airTotal: 0, star: 0, dash: 0, feather: false, ghost: 0, shrink: 0, coins: 0, speedScale: 1,
     cls: CHARACTER_CLASS[character] ?? 0, ccTop: CC_TOP[cc], turnRate: 0, slide: 0, shownSlide: 0, turnFrames: 0, hop: 0, driftHeld: false,
     mtCharge: 0, mtArmed: false, mtStraight: 0, mtBoost: 0, startPress: null, startBoost: false, badStart: 0,
     safe: { ...g }, safeTimer: 0, lap: 0, armed: false, pathIndex: 0, progress: 0,
@@ -381,8 +404,8 @@ export function countdownInput(k: Kart, input: Input, frame: number) {
 }
 
 /** Mushroom, zipper, mini-turbo or start boost under way (sparks behind the kart). */
-export function isBoosting(k: Pick<Kart, 'boost' | 'mtBoost' | 'startBoost'>): boolean {
-  return k.boost > 0 || k.mtBoost > 0 || k.startBoost;
+export function isBoosting(k: Pick<Kart, 'boost' | 'mtBoost' | 'startBoost'> & { dash?: number }): boolean {
+  return (k.dash ?? 0) > 0 || k.boost > 0 || k.mtBoost > 0 || k.startBoost;
 }
 
 /** Where the kart body points (heading plus its swing in a skid), for drawing. */
@@ -472,7 +495,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     k.air--;
     // Never land inside a wall: stay up a bit longer.
     if (k.air === 0 && terrainAt(track, k.x, k.y) === 'wall') k.air = 1;
-    if (k.air === 0) events.land = true;
+    if (k.air === 0) { events.land = true; k.feather = false; }
     countLaps(k, track, startY, events);
     trackProgress(k, track, geo);
     return events;
@@ -482,7 +505,6 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   const surface = k.hop > 0 && k.hop < HOP_FRAMES - 1 ? 'road' : here;
   const offroad = surface === 'slow' && k.star === 0;
   let top = (offroad ? cls.offroad : cls.top + k.ccTop + k.coins * COIN_TOP) * k.speedScale;
-  if (k.star > 0) top *= 1.15;
   if (k.shrink > 0) top *= 0.6;
   let v = units;
   if (k.badStart > 0) {
@@ -492,6 +514,9 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   } else if (k.startBoost) {
     v += 50;
     if (v >= START_BOOST_SPEED) { v = START_BOOST_SPEED; k.startBoost = false; }
+  } else if (input.accel && k.spin === 0 && k.star > 0) {
+    // A star: on up to its own top speed, whatever the kart's.
+    v = v > STAR_TOP ? v - STAR_DROP : v + cls.starAccel + (k.ccTop < 0 ? -0.25 : k.ccTop > 0 ? 0.25 : 0);
   } else if (input.accel && k.spin === 0) {
     if (v < top) v = Math.min(top, v + cls.accel[Math.max(0, Math.min(15, Math.floor(v / 64)))]);
   } else if (input.brake) {
@@ -502,11 +527,19 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     v = Math.min(0, v + 4);
   }
   if (k.mtBoost > 0) { k.mtBoost--; v += MT_ACCEL; }
-  // Mushroom and zipper boosts: pushed up to start-boost speed while they last.
+  // Zipper boosts: pushed up to start-boost speed while they last. A mushroom: its own, bigger push.
   if (k.boost > 0) { k.boost--; v = Math.min(Math.max(v, top) + 50, top + 289); }
-  // Above top speed (boosts, or onto dirt): slows down faster the bigger the excess.
-  const excess = v - top;
-  if (excess > 0 && k.boost === 0 && k.mtBoost === 0 && !k.startBoost) v -= Math.min(excess, Math.max(2, Math.floor(excess / 64) * 8));
+  if (k.dash > 0) {
+    k.dash--;
+    const own = input.accel && v >= top ? cls.accel[Math.max(0, Math.min(15, Math.floor(v / 64)))] : 0;
+    v = Math.min(Math.max(v, 0) + DASH_ACCEL + own, DASH_MAX);
+  }
+  // Above top speed (boosts, a star running out, onto dirt): slows down faster the bigger the excess, up to
+  // EXCESS_MAX_DROP a frame.
+  const excess = v - (k.star > 0 && input.accel ? STAR_TOP + STAR_DROP : top);
+  if (excess > 0 && k.boost === 0 && k.dash === 0 && k.mtBoost === 0 && !k.startBoost) {
+    v -= Math.min(excess, EXCESS_MAX_DROP, Math.max(1.75, Math.floor(excess / 64) * 8));
+  }
   k.speed = v / U;
 
   // Velocity follows the heading; on ice it slides. In a skid the kart drifts a little to the outside.
@@ -528,14 +561,23 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     k.speed *= 0.5;
     return false;
   };
-  const nx = k.x + k.vx;
   const wallHit = () => { if (Math.abs(k.speed) > 0.5) { k.speed *= 0.6; events.bump = true; } };
   // Hitting a wall knocks speed off; pushing against it at a crawl does not (so the kart can still turn away).
-  if (blocked(nx + Math.sign(k.vx) * KART_RADIUS, k.y)) { k.vx *= -0.5; wallHit(); }
-  else k.x = nx;
-  const ny = k.y + k.vy;
-  if (blocked(k.x, ny + Math.sign(k.vy) * KART_RADIUS)) { k.vy *= -0.5; wallHit(); }
-  else k.y = ny;
+  // Fast (a mushroom: up to 8 px a frame) the move is taken in steps of at most 4 px, so it can't jump a wall
+  // one tile thick.
+  const steps = Math.max(1, Math.ceil(Math.max(Math.abs(k.vx), Math.abs(k.vy)) / 4));
+  for (let i = 0, hitX = false, hitY = false; i < steps; i++) {
+    if (!hitX) {
+      const nx = k.x + k.vx / steps;
+      if (blocked(nx + Math.sign(k.vx) * KART_RADIUS, k.y)) { hitX = true; k.vx *= -0.5; wallHit(); }
+      else k.x = nx;
+    }
+    if (!hitY) {
+      const ny = k.y + k.vy / steps;
+      if (blocked(k.x, ny + Math.sign(k.vy) * KART_RADIUS)) { hitY = true; k.vy *= -0.5; wallHit(); }
+      else k.y = ny;
+    }
+  }
 
   // Bump into other karts: the lighter kart takes most of the push (both sides move, each in its own simulation).
   for (const o of others) {
@@ -581,7 +623,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     k.air = k.airTotal = Math.round(k.speed * 6);
   } else if (now === 'fall') {
     k.fall = FALL_FRAMES;
-    k.boost = k.spin = 0;
+    k.boost = k.dash = k.spin = 0;
   } else if (now === 'boost') {
     k.boost = 45;
     k.mtBoost = 0;
@@ -610,9 +652,13 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
 }
 
 /** Height above the floor in world pixels, for drawing jumps. */
-export function kartHeight(k: Pick<Kart, 'air' | 'airTotal'> & { hop?: number }): number {
+export function kartHeight(k: Pick<Kart, 'air' | 'airTotal'> & { hop?: number; feather?: boolean }): number {
   if (k.hop && k.air <= 0) return Math.sin((Math.PI * k.hop) / HOP_FRAMES) * 4;
   if (k.air <= 0 || k.airTotal <= 0) return 0;
+  if (k.feather) {
+    const t = k.airTotal - k.air;
+    return Math.max(0, FEATHER_RISE * t - (FEATHER_FALL / 2) * t * (t - 1)) / U;
+  }
   return Math.sin(Math.PI * (1 - k.air / k.airTotal)) * (k.airTotal > 10 ? 14 : 3);
 }
 
@@ -654,7 +700,7 @@ export function spinOut(k: Kart) {
   if (isInvincible(k) || k.fall > 0) return;
   k.spin = 50;
   k.speed *= 0.2;
-  k.boost = k.mtBoost = k.turnRate = 0;
+  k.boost = k.dash = k.mtBoost = k.turnRate = 0;
   k.mtArmed = false;
 }
 
@@ -663,7 +709,8 @@ export function featherJump(k: Kart) {
   const v = Math.max(1.8, Math.hypot(k.vx, k.vy));
   k.vx = Math.sin(k.angle) * v;
   k.vy = -Math.cos(k.angle) * v;
-  k.air = k.airTotal = 46;
+  k.air = k.airTotal = FEATHER_FRAMES;
+  k.feather = true;
 }
 
 export interface SavedTile {
