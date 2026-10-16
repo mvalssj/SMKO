@@ -1,19 +1,19 @@
 // Gamepads and the on-screen touch controls. Both are turned into the keyboard's keys (synthetic key events
 // on the window), so the menus, races and boards need no code of their own for them. The layout follows the
-// SNES pad: B accelerates / confirms, Y brakes / goes back, A and X use the item, L and R hop, Select hides or
-// shows the course map. Up on the D-pad or the stick also holds PadUp: with the accelerator a button of its own
+// SNES pad: B accelerates / confirms, Y brakes / goes back, A and X use the item, L and R hop.
+// Up on the D-pad or the stick also holds PadUp: with the accelerator a button of its own
 // here, up + item throws a banana forward, as on the SNES.
 
 /** SNES button -> the key it stands for. */
 const SNES: Record<string, string> = {
-  B: 'KeyX', Y: 'KeyZ', A: 'KeyE', X: 'KeyE', L: 'ShiftLeft', R: 'ShiftLeft', START: 'Enter', SELECT: 'KeyM',
+  B: 'KeyX', Y: 'KeyZ', A: 'KeyE', X: 'KeyE', L: 'ShiftLeft', R: 'ShiftLeft', START: 'Enter',
 };
 
 /**
  * Standard gamepad layout (https://w3c.github.io/gamepad/#remapping) -> SNES button, by position: the bottom
  * face button is B, right A, left Y, top X; the triggers also accelerate (RT) and brake (LT).
  */
-const PAD_BUTTONS: Record<number, string> = { 0: 'B', 1: 'A', 2: 'Y', 3: 'X', 4: 'L', 5: 'R', 6: 'Y', 7: 'B', 8: 'SELECT', 9: 'START' };
+const PAD_BUTTONS: Record<number, string> = { 0: 'B', 1: 'A', 2: 'Y', 3: 'X', 4: 'L', 5: 'R', 6: 'Y', 7: 'B', 9: 'START' };
 const PAD_DIRS: Record<number, string> = { 12: 'ArrowUp', 13: 'ArrowDown', 14: 'ArrowLeft', 15: 'ArrowRight' };
 const STICK_DEADZONE = 0.5;
 /** Held with up on a pad's (or the touch) D-pad: see readInput's `up`. */

@@ -490,7 +490,8 @@ function startRace(a: StartArgs) {
   $('results').hidden = true;
   status('results-hint', '');
   renderer ??= new Renderer($('floor') as HTMLCanvasElement, $('overlay') as HTMLCanvasElement, loadRaceGfx(rom!), $('place-fx') as HTMLCanvasElement, raceWidth());
-  renderer.setFullView(!showMap);
+  // The course map is always visible, regardless of old smko-nomap preferences.
+  renderer.setFullView(false);
   const drivers = new Map<number, DriverSprites | null>();
   for (const p of a.players) if (!drivers.has(p.character)) drivers.set(p.character, rom!.loadDriverSprites(p.character, a.track.colors));
   lastDrivers = drivers;
@@ -688,25 +689,6 @@ $('btn-wide').addEventListener('click', (e) => {
   (e.currentTarget as HTMLElement).blur();
 });
 applyWide();
-
-// The course map (lower screen): M or the corner button hides it, and the race fills the picture.
-let showMap = localStorageGet('smko-nomap') !== '1';
-function applyMap() {
-  $('btn-map').textContent = showMap ? '▤ sem mapa' : '▤ com mapa';
-  $('btn-map').title = showMap ? 'Esconder o mapa e mostrar a corrida na tela toda (M)' : 'Mostrar o mapa embaixo (M)';
-  renderer?.setFullView(!showMap);
-}
-function toggleMap() {
-  showMap = !showMap;
-  try { localStorage.setItem('smko-nomap', showMap ? '0' : '1'); } catch { /* private mode */ }
-  applyMap();
-}
-$('btn-map').addEventListener('click', (e) => { toggleMap(); (e.currentTarget as HTMLElement).blur(); });
-addEventListener('keydown', (e) => {
-  if (e.code !== 'KeyM' || e.repeat || e.target instanceof HTMLInputElement) return;
-  toggleMap();
-});
-applyMap();
 
 // Battle Royale's little planet: the floor curving away (on unless turned off).
 Race.planet = localStorageGet('smko-flat') !== '1';
