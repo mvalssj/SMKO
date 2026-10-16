@@ -88,7 +88,7 @@ export class CpuDriver {
     k.vx = k.vy = k.speed = 0;
     k.fall = k.air = k.spin = 0;
     k.spinFrom = null;
-    k.slip = false;
+    k.slip = '';
     k.safe = { x: k.x, y: k.y, angle: k.angle };
   }
 

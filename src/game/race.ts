@@ -357,11 +357,11 @@ export class Race {
           o.sound?.music(MUSIC.lightning);
           if (!isInvincible(k)) {
             k.shrink = SHRINK_FRAMES;
-            spinOut(k);
+            spinOut(k, 'lightning');
             this.item = null;
           }
           for (const c of this.cpus) {
-            if (c.id !== m.id && !isInvincible(c.kart)) { c.kart.shrink = SHRINK_FRAMES; spinOut(c.kart); c.item = null; }
+            if (c.id !== m.id && !isInvincible(c.kart)) { c.kart.shrink = SHRINK_FRAMES; spinOut(c.kart, 'lightning'); c.item = null; }
           }
         } else {
           // One of our bots used an item on itself.

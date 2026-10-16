@@ -60,3 +60,8 @@ Caixas de item (`box-tile-writer.mjs <núcleo> <rom>`): a caixa é um bloco do m
 watchpoint de escrita nele mostra a rotina que pega a caixa (`$C1:B762`, troca o bloco pelo de caixa usada pela
 tabela em `$C1:B72B` e soma 1 em `$1EB4`) e a que as devolve (`$C1:BECA`: quando `$1EB4` chega a 30, todas as caixas
 pegas, guardadas em `$7F:DF80`, voltam e a conta zera). Não há volta por tempo.
+
+Raio (`record-lightning.mjs <núcleo> <rom> saída.json`): o Mario usa o raio; numa CPU, do quadro em que ele cai:
+$102A anda 4032 e 64 a menos a cada quadro por 60 quadros, depois −192 por 8 quadros e −129 (quase 2 voltas, sem
+voltar para a direção de antes), a velocidade cai 56 por quadro e volta a subir no quadro 70. Num jogador não
+foi medido (uma CPU teria de usar o raio).
