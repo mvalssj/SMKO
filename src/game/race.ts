@@ -12,7 +12,7 @@ import type { Channel } from '../net/local';
 import { readInput } from './input';
 import {
   CHARACTER_CLASS, KART_CLASSES, NO_INPUT, STEP_MS, applyBreak, countdownInput, coverTiles, createKart, featherJump, isInvincible,
-  isBoosting, kartFacing, kartHeight, raceGeometry, terrainAt, restoreTiles, spinOut, stepKart, tileCluster, type Bumper, type Kart, type SavedTile,
+  isBoosting, kartFacing, kartHeight, raceGeometry, terrainAt, restoreTiles, spinOut, stepKart, tileCluster, type Bumper, type Input, type Kart, type SavedTile,
 } from './physics';
 import { WORLD_H, WORLD_W, insideZone, wrapDX, wrapDY, wrapX, wrapY, type ZoneNow } from '../../shared/royale';
 import { BotDriver, type Rival } from '../royale/bot';
@@ -481,7 +481,10 @@ export class Race {
     // During the countdown only the accelerate timing counts (start boost / bad start).
     if (!racing) countdownInput(this.kart, readInput(), this.raceFrame(now));
     if (racing && !this.lapStartedAt) this.lapStartedAt = this.startAt;
-    const input = !racing ? NO_INPUT : this.autopilot ? this.autopilot.input(this.kart) : readInput();
+    // The original drives with the pad as it was a frame earlier (read in the vertical blank, used next frame).
+    const pad = !racing ? NO_INPUT : this.autopilot ? this.autopilot.input(this.kart) : readInput();
+    const input = this.lastPad;
+    this.lastPad = pad;
     // Shrunk karts and Boos can be driven through.
     const others = this.bumpers([...this.remote.sample(), ...this.cpus.map((c) => netState(c.id, c.kart))]
       .filter((r) => r.f === 0 && !(r.e & (EFFECT_GHOST | EFFECT_SHRUNK))));
@@ -1011,6 +1014,8 @@ export class Race {
   }
 
   private watchKeys = false;
+  /** The pad last frame (see step: the kart answers it a frame late, as in the original). */
+  private lastPad: Input = NO_INPUT;
 
   /** Held item (or the roulette) in its box at the top center. */
   private drawItemBox(now: number, hud: RaceHud) {

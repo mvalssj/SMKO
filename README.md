@@ -271,6 +271,13 @@ como reserva:
   medidos quadro a quadro no snes9x para as 4 classes (Mario/Luigi, Bowser/DK, Peach/Yoshi, Koopa/Toad):
   aceleração, velocidade máxima por cilindrada, fora da pista, moedas (+8 cada), freio, virada, power slide,
   hop (17 quadros), mini-turbo e largada turbo (janela de 8 quadros ao acender a 1ª luz). 1 unidade = 1/256 px/quadro.
+- **Física conferida contra o original** (`npx tsx tools/physics-fidelity-test.ts`, sem ROM): os mesmos comandos do
+  controle dados ao nosso kart e ao do jogo, comparados quadro a quadro com as gravações do original em
+  `tools/ref/original-physics.json` (só números medidos). Velocidade máxima = tabela do jogo (ROM 0x18000: 912, 944,
+  880, 864); cilindradas do código do jogo (`$83:F026`: 50cc −128, 150cc +160); soltar o acelerador perde 10/8/6/4
+  e frear 12/9/7/4 por quadro conforme a faixa de velocidade; a curva desfaz 14/17/16/18 por quadro ao soltar; a
+  carroceria começa a balançar no 5º/2º/2º/3º quadro da curva e treme um passo para cada lado como no original; o
+  kart responde ao controle um quadro depois, como o jogo (lido no retraço vertical).
 - **Som**: o driver de som do próprio jogo (código SPC700 e amostras da ROM, lista de envio em $82:8000; músicas
   por tema carregadas em $D000) roda num emulador de SPC700 + DSP escrito aqui (`src/audio`), num AudioWorklet.
   Portas: 0 = música, 1 = efeitos, 2/3 = motor. Tecla N liga/desliga.

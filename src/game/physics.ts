@@ -30,17 +30,24 @@ const ANG = (Math.PI * 2) / 65536;
  */
 export interface KartClass {
   accel: number[];
-  /** 100cc top speed with no coins, and on dirt / grass / sand. */
+  /** 100cc top speed with no coins (the game's table at ROM 0x18000, per driver), and on dirt / grass / sand. */
   top: number;
   offroad: number;
   /** Turning: rate added per frame and its limit (angle units per frame), normal and power slide. */
   turnAcc: number;
   turnMax: number;
+  /** Rate taken off per frame once the pad is let go (the turn unwinds slower than it builds up). */
+  turnRelease: number;
   slideAcc: number;
   slideMax: number;
-  /** How far the kart body swings out in a fast turn and in a power slide (angle units). */
+  /**
+   * How far the kart body swings out in a fast turn and in a power slide (angle units): where it settles,
+   * shaking a step either side every frame as in the original (8352 / 8640, 10240 / 10752).
+   */
   skid: number;
   driftSkid: number;
+  /** Frames into a fast turn (or a power slide) before the body starts to swing out. */
+  skidDelay: number;
   /** Kart-to-kart bumps: heavier karts push lighter ones. */
   weight: number;
 }
@@ -48,27 +55,30 @@ export interface KartClass {
 export const KART_CLASSES: KartClass[] = [
   { // Mario, Luigi
     accel: [2, 6, 4, 8, 12, 12, 12, 8, 8, 4, 2, 1.5, 1, 0.5, 0.5, 0.5],
-    top: 911, offroad: 580, turnAcc: 13, turnMax: 306, slideAcc: 17, slideMax: 352, skid: 8640, driftSkid: 10240, weight: 2,
+    top: 912, offroad: 580, turnAcc: 13, turnMax: 306, turnRelease: 14, slideAcc: 17, slideMax: 352, skid: 8496, driftSkid: 10496, skidDelay: 5, weight: 2,
   },
   { // Bowser, DK Jr.
     accel: [2, 2, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 1, 0.5, 0.5, 0.5],
-    top: 943, offroad: 610, turnAcc: 11, turnMax: 288, slideAcc: 15, slideMax: 344, skid: 8352, driftSkid: 10752, weight: 3,
+    top: 944, offroad: 610, turnAcc: 11, turnMax: 288, turnRelease: 17, slideAcc: 15, slideMax: 344, skid: 8496, driftSkid: 10496, skidDelay: 2, weight: 3,
   },
   { // Peach, Yoshi
     accel: [4, 12, 16, 16, 12, 12, 12, 8, 8, 4, 4, 2, 0.5, 0.25, 0.25, 0.25],
-    top: 878, offroad: 620, turnAcc: 11, turnMax: 306, slideAcc: 14, slideMax: 352, skid: 8352, driftSkid: 10752, weight: 1,
+    top: 880, offroad: 620, turnAcc: 11, turnMax: 306, turnRelease: 16, slideAcc: 14, slideMax: 352, skid: 8496, driftSkid: 10496, skidDelay: 2, weight: 1,
   },
   { // Koopa, Toad
     accel: [4, 4, 6, 8, 8, 12, 12, 8, 8, 4, 2, 1.5, 1, 0.64, 0.5, 0.5],
-    top: 863, offroad: 635, turnAcc: 14, turnMax: 288, slideAcc: 18, slideMax: 344, skid: 4608, driftSkid: 10240, weight: 1,
+    top: 864, offroad: 635, turnAcc: 14, turnMax: 288, turnRelease: 18, slideAcc: 18, slideMax: 344, skid: 4464, driftSkid: 10496, skidDelay: 3, weight: 1,
   },
 ];
 
 /** Class of each driver, in the game's character order (Mario, Luigi, Bowser, Peach, DK Jr., Koopa, Toad, Yoshi). */
 export const CHARACTER_CLASS = [0, 0, 1, 2, 1, 3, 3, 2];
 
-/** Top speed change per engine class (50cc measured; 150cc continues the same step). */
-export const CC_TOP: Record<50 | 100 | 150, number> = { 50: -128, 100: 0, 150: 128 };
+/**
+ * Top speed change per engine class: the game's own (bank $83, $F026: the driver's table value, -$80 at
+ * 50cc, +$A0 at 150cc; the time trial runs at 100cc), and measured so in the original.
+ */
+export const CC_TOP: Record<50 | 100 | 150, number> = { 50: -128, 100: 0, 150: 160 };
 /** Each coin adds this much top speed (not off-road). */
 const COIN_TOP = 8;
 /** Start boost: accelerate pressed in this window (frames before the green light) shoots the kart off. */
@@ -111,6 +121,8 @@ export interface Kart {
   /** Heading change this frame (game angle units, signed) and the kart body's swing out of it (radians). */
   turnRate: number;
   slide: number;
+  /** The body's swing as drawn: last frame's (the original draws the kart a frame behind its swing). */
+  shownSlide: number;
   /** Frames into a turn held at speed (the skid starts after a few). */
   turnFrames: number;
   /** Hop (L / R) frames left; whether L / R was down last frame. */
@@ -255,7 +267,7 @@ export function createKart(track: Track, slot: number, character = 0, cc: 50 | 1
   const g = gridPosition(track, slot);
   const kart: Kart = {
     x: g.x, y: g.y, angle: g.angle, vx: 0, vy: 0, speed: 0, boost: 0, spin: 0, fall: 0, air: 0, airTotal: 0, star: 0, ghost: 0, shrink: 0, coins: 0, speedScale: 1,
-    cls: CHARACTER_CLASS[character] ?? 0, ccTop: CC_TOP[cc], turnRate: 0, slide: 0, turnFrames: 0, hop: 0, driftHeld: false,
+    cls: CHARACTER_CLASS[character] ?? 0, ccTop: CC_TOP[cc], turnRate: 0, slide: 0, shownSlide: 0, turnFrames: 0, hop: 0, driftHeld: false,
     mtCharge: 0, mtArmed: false, mtStraight: 0, mtBoost: 0, startPress: null, startBoost: false, badStart: 0,
     safe: { ...g }, safeTimer: 0, lap: 0, armed: false, pathIndex: 0, progress: 0,
   };
@@ -374,8 +386,8 @@ export function isBoosting(k: Pick<Kart, 'boost' | 'mtBoost' | 'startBoost'>): b
 }
 
 /** Where the kart body points (heading plus its swing in a skid), for drawing. */
-export function kartFacing(k: Pick<Kart, 'angle' | 'slide'>): number {
-  return k.angle + k.slide;
+export function kartFacing(k: Pick<Kart, 'angle' | 'slide'> & { shownSlide?: number }): number {
+  return k.angle + (k.shownSlide ?? k.slide);
 }
 
 export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry, others: Bumper[], frame = 0): StepEvents {
@@ -418,17 +430,21 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     k.turnRate += Math.max(-step, Math.min(step, steer * max - k.turnRate));
     k.turnFrames++;
   } else {
-    k.turnRate -= Math.sign(k.turnRate) * Math.min(Math.abs(k.turnRate), cls.turnAcc * 3);
+    k.turnRate -= Math.sign(k.turnRate) * Math.min(Math.abs(k.turnRate), cls.turnRelease);
     k.turnFrames = 0;
   }
   k.angle += k.turnRate * ANG * grip;
   if (k.spin > 0) { k.spin--; k.angle += 0.35; }
 
   // The body swings out in a fast turn (more in a power slide) and swings back when straightened.
-  const skidTarget = steer !== 0 && k.spin === 0 && units > SKID_SPEED && (sliding || k.turnFrames > 5)
+  k.shownSlide = k.slide;
+  const skidTarget = steer !== 0 && k.spin === 0 && units > SKID_SPEED && k.turnFrames >= cls.skidDelay
     ? steer * (sliding ? cls.driftSkid : cls.skid) * ANG : 0;
+  // It moves a step a frame; swung out, it keeps stepping across where it settles (the body shakes), and
+  // swinging back it stops straight.
   const swing = (sliding ? 512 : 288) * ANG;
-  k.slide += Math.max(-swing, Math.min(swing, skidTarget - k.slide));
+  if (skidTarget === 0) k.slide += Math.max(-swing, Math.min(swing, -k.slide));
+  else k.slide += k.slide < skidTarget ? swing : -swing;
 
   // Mini-turbo: charge with L / R + direction + accelerate; released at 128+, it fires once the kart runs straight.
   if (input.drift && steer !== 0 && input.accel && !airborne) {
@@ -479,9 +495,9 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   } else if (input.accel && k.spin === 0) {
     if (v < top) v = Math.min(top, v + cls.accel[Math.max(0, Math.min(15, Math.floor(v / 64)))]);
   } else if (input.brake) {
-    v = v > 0 ? Math.max(0, v - [3.5, 6.5, 8.5, 11.5][Math.min(3, Math.floor(v / 256))]) : Math.max(REVERSE_MAX * U, v - 2);
+    v = v > 0 ? Math.max(0, v - [4, 7, 9, 12][Math.min(3, Math.floor(v / 256))]) : Math.max(REVERSE_MAX * U, v - 2);
   } else if (v > 0) {
-    v = Math.max(0, v - (3.75 + 2 * Math.min(3, Math.floor(v / 256))));
+    v = Math.max(0, v - (4 + 2 * Math.min(3, Math.floor(v / 256))));
   } else {
     v = Math.min(0, v + 4);
   }
