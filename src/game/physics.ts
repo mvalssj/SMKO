@@ -77,7 +77,7 @@ export const KART_CLASSES: KartClass[] = [
 export const CHARACTER_CLASS = [0, 0, 1, 2, 1, 3, 3, 2];
 
 /**
- * Top speed change per engine class: the game's own (bank $83, $F026: the driver's table value, -$80 at
+ * Top speed change per engine class: the game's own (code at $C1:F026, HiROM: the driver's table value, -$80 at
  * 50cc, +$A0 at 150cc; the time trial runs at 100cc), and measured so in the original.
  */
 export const CC_TOP: Record<50 | 100 | 150, number> = { 50: -128, 100: 0, 150: 160 };
@@ -522,7 +522,8 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   } else if (input.brake) {
     v = v > 0 ? Math.max(0, v - [4, 7, 9, 12][Math.min(3, Math.floor(v / 256))]) : Math.max(REVERSE_MAX * U, v - 2);
   } else if (v > 0) {
-    v = Math.max(0, v - (4 + 2 * Math.min(3, Math.floor(v / 256))));
+    // (Over 1024, after a mushroom or at 150cc: 16.)
+    v = Math.max(0, v - (v >= 1024 ? 16 : 4 + 2 * Math.min(3, Math.floor(v / 256))));
   } else {
     v = Math.min(0, v + 4);
   }
@@ -534,10 +535,10 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     const own = input.accel && v >= top ? cls.accel[Math.max(0, Math.min(15, Math.floor(v / 64)))] : 0;
     v = Math.min(Math.max(v, 0) + DASH_ACCEL + own, DASH_MAX);
   }
-  // Above top speed (boosts, a star running out, onto dirt): slows down faster the bigger the excess, up to
-  // EXCESS_MAX_DROP a frame.
+  // Above top speed (boosts, a star running out, onto dirt) with the accelerator held: slows down faster the
+  // bigger the excess, up to EXCESS_MAX_DROP a frame (let go, only the ordinary slowing down above applies).
   const excess = v - (k.star > 0 && input.accel ? STAR_TOP + STAR_DROP : top);
-  if (excess > 0 && k.boost === 0 && k.dash === 0 && k.mtBoost === 0 && !k.startBoost) {
+  if (excess > 0 && input.accel && k.boost === 0 && k.dash === 0 && k.mtBoost === 0 && !k.startBoost) {
     v -= Math.min(excess, EXCESS_MAX_DROP, Math.max(1.75, Math.floor(excess / 64) * 8));
   }
   k.speed = v / U;

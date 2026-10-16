@@ -274,7 +274,7 @@ como reserva:
 - **Física conferida contra o original** (`npx tsx tools/physics-fidelity-test.ts`, sem ROM): os mesmos comandos do
   controle dados ao nosso kart e ao do jogo, comparados quadro a quadro com as gravações do original em
   `tools/ref/original-physics.json` (só números medidos). Velocidade máxima = tabela do jogo (ROM 0x18000: 912, 944,
-  880, 864); cilindradas do código do jogo (`$83:F026`: 50cc −128, 150cc +160); soltar o acelerador perde 10/8/6/4
+  880, 864); cilindradas do código do jogo (`$C1:F026`: 50cc −128, 150cc +160); soltar o acelerador perde 10/8/6/4
   e frear 12/9/7/4 por quadro conforme a faixa de velocidade; a curva desfaz 14/17/16/18 por quadro ao soltar; a
   carroceria começa a balançar no 5º/2º/2º/3º quadro da curva e treme um passo para cada lado como no original; o
   kart responde ao controle um quadro depois, como o jogo (lido no retraço vertical).
@@ -284,7 +284,8 @@ como reserva:
   velocidade máxima o kart perde no máximo 56 por quadro; estrela dura 512 quadros e leva qualquer kart a
   1280–1314; pena é um arco de 36 quadros e 16 px; Boo deixa o kart invisível por 1152 quadros (medido em 8º
   lugar); o raio deixa os outros pequenos por 157 quadros. Ainda não medidos: rodada (banana/casco), cascos,
-  caixas de item e o item especial de cada CPU.
+  caixas de item e o item especial de cada CPU. Soltando o acelerador acima da velocidade máxima, só vale a desaceleração normal (16 por quadro acima de 1024).
+  Os scripts de medição (emulador à parte, com o DSP-1 respondido pela matemática dos comandos) estão em `tools/original/`.
 - **Som**: o driver de som do próprio jogo (código SPC700 e amostras da ROM, lista de envio em $82:8000; músicas
   por tema carregadas em $D000) roda num emulador de SPC700 + DSP escrito aqui (`src/audio`), num AudioWorklet.
   Portas: 0 = música, 1 = efeitos, 2/3 = motor. Tecla N liga/desliga.

@@ -39,7 +39,7 @@ function drive(cls: number, cc: 50 | 100 | 150, inputs: Partial<Input>[], start?
 }
 const repeat = (inp: Partial<Input>, n: number) => Array.from({ length: n }, () => inp);
 
-// 1. Top speeds (the game's table at ROM 0x18000) and the engine classes (bank $83, $F026: -$80 / +$A0).
+// 1. Top speeds (the game's table at ROM 0x18000) and the engine classes (code at $C1:F026, HiROM: -$80 / +$A0).
 check(KART_CLASSES.map((c) => c.top).join() === '912,944,880,864', 'velocidade máxima de cada classe = tabela da ROM (912, 944, 880, 864)');
 check(CC_TOP[50] === -128 && CC_TOP[100] === 0 && CC_TOP[150] === 160, 'cilindradas: 50cc -128, 150cc +160 (como no código do jogo)');
 
@@ -97,6 +97,21 @@ for (let c = 0; c < 4; c++) {
     check(sum / n <= (what === 'estrela' ? 9 : c === 1 || c === 2 ? 30 : 4), `${what} ${NAMES[c]}: diferença média ${(sum / n).toFixed(1)}, máxima ${max} (pico ${Math.max(...orig)} / ${Math.max(...ours)})`);
   }
 }
+// A mushroom, then letting go of the accelerator 40 frames after the press (Mario): over top speed, only the
+// ordinary slowing down (16 a frame over 1024; the recording's 15.75 / 9.75 averages are the terrain changing
+// under the kart in a run without the DSP-1, as in 3).
+{
+  const orig: number[] = ref.mushroomLetGo;
+  const k = createKart(flat, 0, 0, 100);
+  k.speed = orig[0] / 256; k.vy = -k.speed;
+  k.dash = DASH_FRAMES;
+  const ours: number[] = [orig[0]];
+  for (let i = 1; i < orig.length; i++) { stepKart(k, { ...NO_INPUT, accel: i < 46 }, flat, geo, [], i); ours.push(Math.round(k.speed * 256)); }
+  let max = 0, sum = 0;
+  for (let i = 0; i < orig.length; i++) { const d = Math.abs(ours[i] - orig[i]); max = Math.max(max, d); sum += d; }
+  check(sum / orig.length <= 9, `cogumelo e soltar o acelerador: diferença média ${(sum / orig.length).toFixed(1)}, máxima ${max}`);
+}
+
 // The feather's arc: height frame by frame (1/256 px).
 {
   const k = createKart(flat, 0, 0, 50);
