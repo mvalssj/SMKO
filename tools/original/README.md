@@ -54,7 +54,7 @@ está certa na emulação; sem o chip verdadeiro não dá para decidir.
 
 Com os sprites projetados, os itens acertam na análise: um casco verde da largada acerta a CPU parada à frente
 (`dsp-objects.mjs <núcleo> <rom> 4 150 saída.json`). Uma banana mudada de lugar direto na memória não acerta (outros
-dados do objeto não acompanham); a escorregada na banana ainda não foi medida.
+dados do objeto não acompanham); a escorregada foi medida pondo o kart, já andando, na linha da banana bem antes dela (`record-banana.mjs <núcleo> <rom> saída.json 200 400 750`: distância, espera, velocidade; posto perto demais, ele passa sem escorregar). Do toque em diante: $102A anda −2560 por quadro por 77 quadros e $10AA o mesmo ao contrário (o kart segue na direção em que ia), a velocidade cai 8 por quadro e volta a subir no quadro 105, igual a 303, 675 e 769 de velocidade. Numa das medidas a velocidade foi a 0 de repente no quadro 65 (60 em outra); a causa não foi achada.
 
 Caixas de item (`box-tile-writer.mjs <núcleo> <rom>`): a caixa é um bloco do mapa da pista em `$7F:0000`; um
 watchpoint de escrita nele mostra a rotina que pega a caixa (`$C1:B762`, troca o bloco pelo de caixa usada pela

@@ -153,6 +153,27 @@ for (let c = 0; c < 4; c++) {
   check(k.speed === 0 && same >= 110 && Math.abs(turnsO - 6) < 0.1 && turnsU === 6, `rodada do casco: ${same} de 120 quadros com o mesmo giro, ${turnsO.toFixed(2)} voltas no original, kart parado e de volta à direção`);
 }
 
+// 7b. Slipping on a banana (Mario Circuit 1, 50cc, with the DSP-1 answered): 3 turns and a bit, on the way it
+// went, 8 a frame slower; facing the way it was again and driving on 105 frames later. The facing frame by frame.
+{
+  const { spinOut, SLIP_FRAMES } = await import('../src/game/physics');
+  const r = ref.bananaSlip;
+  const k = createKart(flat, 0, 0, 50);
+  k.speed = r.speed[0] / 256; k.vy = -k.speed;
+  const start = k.angle, x0 = k.x;
+  spinOut(k, 'banana');
+  let same = 0, sameV = 0, n = 0;
+  for (let i = 1; i < r.facing.length; i++) {
+    stepKart(k, { ...NO_INPUT, accel: true }, flat, geo, [], i);
+    const f = ((Math.round(((k.angle - start) * 65536) / (Math.PI * 2)) % 65536) + 65536) % 65536;
+    if (Math.abs(f - r.facing[i]) <= 1 || i >= SLIP_FRAMES - 2) same++;
+    if (i < 64) { n++; if (Math.abs(k.speed * 256 - r.speed[i]) <= 1) sameV++; }
+  }
+  const moving = r.speed.findIndex((v: number, i: number) => i > 70 && v > 0);
+  check(same >= r.facing.length - 2 && sameV === n && Math.abs(k.x - x0) < 0.5 && moving === SLIP_FRAMES + 1,
+    `banana: ${same} de ${r.facing.length - 1} quadros com a mesma direção, velocidade igual em ${sameV} de ${n}, segue reto, volta a andar no quadro ${moving} (nosso ${SLIP_FRAMES + 1})`);
+}
+
 // 8. The roulette (an item box on Mario Circuit 1, held item $0D70/$0D71): spins 201 frames or until the button
 // (3 frames later), the item usable 65 frames after it stops.
 {
