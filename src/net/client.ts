@@ -10,6 +10,10 @@ export class NetClient {
   private handlers = new Set<Handler>();
   readonly opened: Promise<void>;
   onClose: (() => void) | null = null;
+  /** Latest Royale host, including a handoff received while the world is still loading. */
+  royaleHost: number | null = null;
+  /** Last authoritative positions, retained across the loading screen for a bot-host handoff. */
+  readonly latestKarts = new Map<number, KartNetState>();
 
   constructor() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -20,6 +24,10 @@ export class NetClient {
     });
     this.ws.addEventListener('message', (e) => {
       const msg = JSON.parse(e.data) as ServerMsg;
+      if (msg.t === 'royaleStart') this.royaleHost = msg.host;
+      if (msg.t === 'cpuHost') this.royaleHost = msg.id;
+      if (msg.t === 'states') for (const k of msg.karts) this.latestKarts.set(k.id, k);
+      if (msg.t === 'royaleSwap') this.latestKarts.delete(msg.bot);
       if (msg.t === 'notice') NetClient.notice?.(msg.message);
       for (const h of this.handlers) h(msg);
     });
@@ -37,6 +45,7 @@ export class NetClient {
 
   close() {
     this.onClose = null;
+    this.latestKarts.clear();
     this.ws.close();
   }
 }

@@ -142,6 +142,10 @@ export function royaleClose(id: number) {
   if (!people.length) { end(m); return; }
   if (m.host === id) {
     m.host = people[0].id;
+    // The new host must inherit every living bot, including far-away ones not sent on recent ticks.
+    // Deliver their last accepted positions before the handoff, so it can resume them without a jump.
+    const karts = bots(m, true).flatMap((p) => p.kart ? [p.kart] : []);
+    if (karts.length) sendTo(m, m.host, { t: 'states', karts });
     broadcast(m, { t: 'cpuHost', id: m.host });
   }
 }

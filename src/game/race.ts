@@ -6,7 +6,7 @@ import {
   CPU_SPECIAL, type Cc, type EntityKind, type ItemKind, type KartNetState, type PlayerInfo, type ServerMsg,
 } from '../../shared/protocol';
 import { ROULETTE_MS, ROULETTE_SHOW_MS, ROULETTE_SPIN_MS, ROULETTE_STOP_MS, START_COINS } from '../../shared/items';
-import { CHARACTERS, Genre, MAP_PX, TILE, type DriverSprites, type ItemGraphics, type SpriteFrame, type Track } from '../rom/rom';
+import { CHARACTERS, Genre, TILE, type DriverSprites, type ItemGraphics, type SpriteFrame, type Track } from '../rom/rom';
 import { RemoteKarts, type NetClient } from '../net/client';
 import type { Channel } from '../net/local';
 import { readInput } from './input';
@@ -16,9 +16,9 @@ import {
 } from './physics';
 import { WORLD_H, WORLD_W, insideZone, wrapDX, wrapDY, wrapX, wrapY, type ZoneNow } from '../../shared/royale';
 import { BotDriver, type Rival } from '../royale/bot';
-import type { RoyaleState } from '../royale/state';
+import { RoyaleState, royaleBotSlots } from '../royale/state';
 import { regionAt } from '../royale/world';
-import { CHASE_DISTANCE, MAP_SCALE_WORLD, PLANET_RADIUS, Renderer, SCREEN_W, type MapMarker, type ObjectSprite, type Sprite } from './renderer';
+import { CHASE_DISTANCE, PLANET_RADIUS, Renderer, type MapMarker, type ObjectSprite, type Sprite } from './renderer';
 import { PLACE_RED, RaceHud, placeRainbow, type LakituShow } from './hud';
 import { CpuDriver, rubberBand } from './cpu';
 import { objectState } from './objects';
@@ -70,6 +70,8 @@ export interface RaceOptions {
   /** Battle Royale, taking over a bot: where our kart is; and everyone's balloons so far. */
   start?: { x: number; y: number; a: number };
   balloons?: [number, number][];
+  /** Last server snapshots if bot hosting changed while the world was loading. */
+  cpuStarts?: ReadonlyMap<number, KartNetState>;
 }
 
 /**
@@ -184,6 +186,11 @@ export class Race {
     for (const [id, n] of o.balloons ?? []) this.balloons.set(id, n);
     this.cpus = o.cpus.map((c) => {
       const kart = place(createKart(o.track, c.slot, charOf(c.id), o.cc), c.slot, charOf(c.id), true);
+      const snapshot = o.cpuStarts?.get(c.id);
+      if (o.royale && snapshot && [snapshot.x, snapshot.y, snapshot.a, snapshot.s].every(Number.isFinite)) {
+        Object.assign(kart, { x: wrapX(snapshot.x), y: wrapY(snapshot.y), angle: snapshot.a, speed: snapshot.s });
+        kart.safe = { x: kart.x, y: kart.y, angle: kart.angle };
+      }
       if (o.items) kart.coins = START_COINS;
       const bot = o.royale ? new BotDriver(o.royale.world, c.id, c.skill, Math.random) : undefined;
       return { id: c.id, kart, driver: new CpuDriver(o.track, kart, c.skill), finishedAt: 0, bot, item: null, rollingUntil: 0, pickupCooldown: 0 };
@@ -198,7 +205,7 @@ export class Race {
       cols: world.cols, rows: world.rows, ids: world.ids, atlas: world.atlas, atlasW: 512, atlasH: 256, outside: world.baseTheme * 256 + 0x44,
     } : null);
     o.sound?.course(o.track.theme);
-    if (o.royale) { this.followRegion(true); this.showWorldMap(); this.applyPlanet(); }
+    if (o.royale) { this.followRegion(true); this.applyPlanet(); }
     o.hud.note.textContent = '';
 
     if (o.net) {
@@ -734,19 +741,6 @@ export class Race {
     }
   }
 
-  /**
-   * Battle Royale: the course map (lower screen) shows the whole world, so every driver still in is on it:
-   * as wide as the picture on its nearest (widest) line (the widescreen one too), its south edge on the map's
-   * last line. (Called every frame: the picture can change width.)
-   */
-  private showWorldMap() {
-    const w = this.o.royale!.world.world;
-    const r = this.o.renderer;
-    r.mapZoom = (w.cols * TILE) / (Math.max(SCREEN_W, r.width) * MAP_SCALE_WORLD);
-    // (Its middle in the middle of the picture: the map puts course x = MAP_PX / 2 there.)
-    r.mapOrigin = { x: (w.cols * TILE) / 2 - (MAP_PX / 2) * r.mapZoom, y: w.rows * TILE - MAP_PX * r.mapZoom };
-  }
-
   /** Battle Royale: the little planet's curve on or off (Race.planet). */
   applyPlanet() {
     if (this.o.royale) this.o.renderer.curve = Race.planet ? 1 / (2 * PLANET_RADIUS) : 0;
@@ -795,21 +789,28 @@ export class Race {
   private adoptCpus() {
     const o = this.o;
     const mine = new Set(this.cpus.map((c) => c.id));
+    if (o.royale) {
+      // Do not depend on nearby snapshots: the old host was the only browser simulating bots,
+      // and the new host may not have seen a far-away bot yet. Adopt every survivor by roster.
+      for (const { p, slot } of royaleBotSlots(o.players, this.balloons, mine)) {
+        const r = o.net?.latestKarts.get(p.id) ?? this.remote.latest(p.id);
+        const kart = createKart(o.track, slot, p.character, o.cc);
+        const spawn = o.royale.spawn(slot, p.character, true);
+        const at = r && [r.x, r.y, r.a, r.s].every(Number.isFinite)
+          ? { x: wrapX(r.x), y: wrapY(r.y), angle: r.a, speed: r.s }
+          : { ...spawn, speed: 0 };
+        Object.assign(kart, at);
+        kart.safe = { x: at.x, y: at.y, angle: at.angle };
+        const bot = new BotDriver(o.royale.world, p.id, 0.6 + Math.random() * 0.4, Math.random);
+        this.cpus.push({ id: p.id, kart, driver: new CpuDriver(o.track, kart, 0.8), finishedAt: 0, bot, item: null, rollingUntil: 0, pickupCooldown: 0 });
+        this.local.add(p.id);
+        this.remote.forget(p.id);
+      }
+      return;
+    }
     for (const r of this.remote.sample()) {
       const p = this.player(r.id);
       if (!p?.cpu || mine.has(r.id)) continue;
-      if (o.royale) {
-        // A Battle Royale bot still in: carry on from where it was.
-        if ((this.balloons.get(r.id) ?? 1) <= 0) continue;
-        const kart = createKart(o.track, 0, p.character, o.cc);
-        Object.assign(kart, { x: r.x, y: r.y, angle: r.a, speed: r.s });
-        kart.safe = { x: r.x, y: r.y, angle: r.a };
-        const bot = new BotDriver(o.royale.world, r.id, 0.6 + Math.random() * 0.4, Math.random);
-        this.cpus.push({ id: r.id, kart, driver: new CpuDriver(o.track, kart, 0.8), finishedAt: 0, bot, item: null, rollingUntil: 0, pickupCooldown: 0 });
-        this.local.add(r.id);
-        this.remote.forget(r.id);
-        continue;
-      }
       const kart = createKart(o.track, 0, p.character, o.cc);
       Object.assign(kart, { x: r.x, y: r.y, angle: r.a, speed: r.s, lap: r.lap, progress: r.p });
       kart.safe = { x: r.x, y: r.y, angle: r.a };
@@ -936,7 +937,6 @@ export class Race {
   // ---------- Drawing ----------
 
   private draw(now: number) {
-    if (this.o.royale) this.showWorldMap();
     const o = this.o;
     const remotes = [...this.remote.sample(), ...this.cpus.filter((c) => !c.out).map((c) => netState(c.id, c.kart))]
       .filter((r) => !o.royale || (this.balloons.get(r.id) ?? 1) > 0);

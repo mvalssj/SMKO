@@ -6,9 +6,10 @@
 import { readFileSync } from 'node:fs';
 import { SmkRom, TILE } from '../src/rom/rom';
 import { buildWorld } from '../src/royale/world';
-import { RoyaleState } from '../src/royale/state';
+import { RoyaleState, royaleBotSlots } from '../src/royale/state';
 import { BotDriver } from '../src/royale/bot';
-import { createKart, raceGeometry, stepKart, terrainOf } from '../src/game/physics';
+import { createKart, raceGeometry, stepKart, terrainAt, terrainOf } from '../src/game/physics';
+import { worldMapPoint } from '../src/game/renderer';
 import {
   MARGIN_TILES, COURSE_TILES, GAP_TILES, WORLD_H, WORLD_REGIONS, WORLD_W, insideZone, mulberry32, worldCourseAt, wrapDist,
   zoneAt, zoneCircles,
@@ -92,6 +93,25 @@ check(deadlyEnds <= 10, `zona: o fim quase nunca cai no vazio ou na lava (${dead
 
 // 4. Bots driving about for a while.
 const st = new RoyaleState(world, 777);
+const roster = [{ id: 1, name: 'human', character: 0, ready: true },
+  ...Array.from({ length: 99 }, (_, i) => ({ id: 1000 + i, name: 'bot', character: i % 8, ready: true, cpu: true }))];
+const adopted = royaleBotSlots(roster, new Map([[1000, 0]]), new Set([1, 1001]));
+check(adopted.length === 97 && adopted.every(({ p }) => p.id !== 1000 && p.id !== 1001),
+  'troca de anfitrião assume todos os bots vivos mesmo sem snapshots remotos');
+// Every possible human slot must start on solid ground in Battle Course 4, and be visible on
+// the same world map as the bots (on narrow and wide screens alike).
+const arena = regions.find((r) => r.info.name === 'Battle Course 4')!;
+const starts = Array.from({ length: 100 }, (_, slot) => st.spawn(slot));
+check(starts.every((s) => s.x >= arena.x0 * TILE && s.x < (arena.x0 + COURSE_TILES) * TILE
+  && s.y >= arena.y0 * TILE && s.y < (arena.y0 + COURSE_TILES) * TILE
+  && !['wall', 'fall'].includes(terrainAt(world, s.x, s.y))), '100 lugares de largada sobre o chão da arena');
+for (const width of [256, 384]) {
+  const pad = (width - 256) / 2;
+  check(starts.every((s) => {
+    const p = worldMapPoint(s.x, s.y, WORLD_W, WORLD_H, width, pad);
+    return p && p.x >= -pad && p.x <= width - pad && p.y >= 0 && p.y < 224;
+  }), `largada visível no minimapa ${width}px`);
+}
 const rand = mulberry32(5);
 const geo = raceGeometry(world);
 const bots = Array.from({ length: 99 }, (_, i) => {

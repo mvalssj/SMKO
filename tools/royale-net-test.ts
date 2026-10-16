@@ -66,6 +66,15 @@ for (let i = 0; i < 10; i++) { spread(); await sleep(50); }
 await sleep(500);
 const sizes = b.got.filter((m): m is Extract<ServerMsg, { t: 'states' }> => m.t === 'states').map((m) => m.karts.length);
 check(sizes.length >= 5 && Math.min(...sizes) < Math.max(...sizes) && Math.max(...sizes) >= 90, `karts distantes menos vezes (por mensagem: ${Math.min(...sizes)}..${Math.max(...sizes)})`);
+// A real bot snapshot from the host must be accepted and relayed to another player.
+const moving = bots.find((bot) => bot.id !== swap.bot)!;
+const botIndex = bots.indexOf(moving);
+const x0 = 200 + (botIndex % 10) * 700;
+const y0 = 200 + Math.floor(botIndex / 10) * 450;
+a.send({ t: 'cpu', karts: [{ id: moving.id, x: x0 + 16, y: y0, a: 0, s: 1, lap: 0, p: 0, f: 0, h: 0, e: 0 }] });
+await sleep(400);
+const moved = b.got.some((m) => m.t === 'states' && m.karts.some((k) => k.id === moving.id && k.x === x0 + 16));
+check(moved, 'posição nova do bot chega aos outros jogadores');
 
 // Balloons: B pops three times after the start and is out.
 await sleep(Math.max(0, sa.startInMs - 1200));
@@ -77,6 +86,10 @@ check(!!out && out.id === sb.selfId && out.place === 100, `três balões furados
 a.ws.close();
 const host = await b.wait('cpuHost', 3000).catch(() => null);
 check(host?.id === sb.selfId, 'quem fica passa a rodar os bots');
+const botIds = new Set(bots.map((bot) => bot.id));
+const inherited = b.got.filter((m): m is Extract<ServerMsg, { t: 'states' }> => m.t === 'states')
+  .some((m) => m.karts.filter((k) => botIds.has(k.id)).length >= 90);
+check(inherited, 'o novo anfitrião recebe as posições de todos os bots antes de assumir');
 b.ws.close();
 console.log(failed ? 'houve falhas' : 'tudo certo');
 process.exit(failed ? 1 : 0);

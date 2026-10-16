@@ -1,6 +1,7 @@
 // One Battle Royale match on this client: the world, the safe area's circles (from the match seed, the same
 // everywhere), the bots' way-finding map to the next circle, and where everyone starts.
 
+import type { PlayerInfo } from '../../shared/protocol';
 import { ROYALE_PLAYERS, COURSE_TILES, TILE_PX, WORLD_REGIONS, mulberry32, zoneAt, zoneCircles, type Circle, type ZoneNow } from '../../shared/royale';
 import { NavField } from './bot';
 import { itemBoxes, type WorldTrack } from './world';
@@ -8,6 +9,11 @@ import { itemBoxes, type WorldTrack } from './world';
 type Spawn = { x: number; y: number; angle: number };
 /** Home region for Mario, Luigi, Bowser, Peach, DK Jr., Koopa, Toad and Yoshi, respectively. */
 const DRIVER_HOMES = ['Mario Circuit', 'Ghost Valley', 'Bowser Castle', 'Donut Plains', 'Choco Island', 'Koopa Beach', 'Vanilla Lake', 'Rainbow Road'];
+
+/** Every living bot must be adopted at handoff, even if its last remote snapshot was never visible. */
+export function royaleBotSlots(players: PlayerInfo[], balloons: ReadonlyMap<number, number>, mine: ReadonlySet<number>) {
+  return players.flatMap((p, slot) => p.cpu && !mine.has(p.id) && (balloons.get(p.id) ?? 1) > 0 ? [{ p, slot }] : []);
+}
 
 export class RoyaleState {
   readonly circles: Circle[];

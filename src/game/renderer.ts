@@ -88,14 +88,7 @@ const MAP_FOCUS = { x: MAP_PX / 2, y: 984 };
 /** World pixels per screen pixel on the nearest map line. */
 export const MAP_SCALE = floorLine(MAP_VIEW, MAP_BOTTOM - 1)!.across;
 
-/**
- * Battle Royale's map of the whole world: not the original's camera (the world would be a small patch in the
- * middle), a lean that fills the map's lines, the world's far edge narrower by WORLD_MAP_TILT, MAP_SCALE_WORLD
- * world px (per mapZoom) per screen px on the nearest line.
- */
-export const WORLD_MAP_TILT = 0.7;
-export const MAP_SCALE_WORLD = 4.2;
-
+/** The Battle Royale minimap fits the entire world, including its starting arena, on every screen size. */
 /** Where a map screen line meets the course (course pixels ahead: its y), and its pixels per screen pixel. */
 export function mapLine(sy: number): { y: number; across: number } | null {
   const l = floorLine(MAP_VIEW, sy);
@@ -284,11 +277,10 @@ void main() {
     vec2 wp = uCam + fwd * z + right * lateral;
     c = zoned(floorAt(wp), wp);
   } else if (${full ? 'false' : 'true'} && ${world ? 'true' : 'false'} && sy >= ${MAP_TOP}.0 && sy < ${MAP_BOTTOM}.0) {
-    // The Battle Royale world's map: north up, leaning away, filling the map's lines (WORLD_MAP_TILT).
-    float t = (sy - ${MAP_TOP}.0 + 0.5) / ${MAP_BOTTOM - MAP_TOP}.0;
-    float wy = ${MAP_PX}.0 * uMapZoom * t * (1.0 + ${f(WORLD_MAP_TILT)}) / (1.0 + ${f(WORLD_MAP_TILT)} * t);
-    float scale = ${f(MAP_SCALE_WORLD)} * uMapZoom * (1.0 + ${f(WORLD_MAP_TILT)}) / (1.0 + ${f(WORLD_MAP_TILT)} * t);
-    vec2 mp = uMapOrigin + vec2(${MAP_PX / 2}.0 * uMapZoom + (sx + 0.5 - ${w / 2}.0) * scale, wy);
+    // Show every world coordinate exactly once. The old width-based zoom covered only the bottom strip,
+    // hiding the starting arena and making karts appear to jump between unrelated pieces of the map.
+    vec2 mp = vec2((sx + 0.5) / ${w}.0 * ${world?.cols ?? 0}.0 * 8.0,
+                   (sy - ${MAP_TOP}.0 + 0.5) / ${MAP_BOTTOM - MAP_TOP}.0 * ${world?.rows ?? 0}.0 * 8.0);
     c = zoned(floorMapAt(mp), mp);
   } else if (${full ? 'false' : 'true'} && sy >= ${MAP_TOP}.0 && sy < ${MAP_BOTTOM}.0) {
     // Course map: north up, seen by the original's map camera (MAP_VIEW, mapLine).
@@ -532,8 +524,8 @@ export class Renderer {
     for (const m of this.fullView ? [] : markers) {
       // (In the world, wherever the kart is counted, brought back into the world.)
       const mx = world ? m.x - world.w * Math.floor(m.x / world.w) : m.x, my = world ? m.y - world.h * Math.floor(m.y / world.h) : m.y;
-      const p = world ? worldMapPoint(mx - this.mapOrigin.x, my - this.mapOrigin.y, this.mapZoom) : mapPoint(mx - this.mapOrigin.x, my - this.mapOrigin.y, this.mapZoom);
-      if (p && (p.x < -8 || p.x > SCREEN_W + 8)) continue;
+      const p = world ? worldMapPoint(mx, my, world.w, world.h, this.width, this.pad) : mapPoint(mx - this.mapOrigin.x, my - this.mapOrigin.y, this.mapZoom);
+      if (p && (p.x < (world ? -this.pad : 0) - 8 || p.x > (world ? this.width - this.pad : SCREEN_W) + 8)) continue;
       if (p) this.hud!.head(m.character, p.x, p.y, m.palette, m.small);
     }
     // The HUD moves down with the race view. (Its top lines, hidden on the original's black lines 0-2, stay
@@ -695,13 +687,10 @@ export function placeMask(table: Uint8Array, n: number, put: (x: number, y: numb
   }
 }
 
-/** Where a Battle Royale world position shows on its map (lower screen), or null outside it. */
-export function worldMapPoint(x: number, y: number, zoom: number): { x: number; y: number } | null {
-  const u = y / (MAP_PX * zoom);
-  if (u < 0 || u > 1) return null;
-  const t = u / (1 + WORLD_MAP_TILT - WORLD_MAP_TILT * u);
-  const scale = (MAP_SCALE_WORLD * zoom * (1 + WORLD_MAP_TILT)) / (1 + WORLD_MAP_TILT * t);
-  return { x: SCREEN_W / 2 + (x - (MAP_PX * zoom) / 2) / scale, y: MAP_TOP + t * (MAP_BOTTOM - MAP_TOP) };
+/** World coordinates projected onto the whole-world minimap (local HUD coordinates). */
+export function worldMapPoint(x: number, y: number, worldW: number, worldH: number, width: number, pad: number): { x: number; y: number } | null {
+  if (x < 0 || x >= worldW || y < 0 || y >= worldH) return null;
+  return { x: (x / worldW) * width - pad, y: MAP_TOP + (y / worldH) * (MAP_BOTTOM - MAP_TOP) };
 }
 
 /** Where a world position shows on the course map (lower screen), or null outside it. */

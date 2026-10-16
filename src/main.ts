@@ -1,5 +1,5 @@
 import {
-  CHARACTER_NAMES, COUNTDOWN_MS, CPU_ID_BASE, type Cc, type PlayerInfo, type ResultEntry, type ServerMsg, type Standing,
+  CHARACTER_NAMES, COUNTDOWN_MS, CPU_ID_BASE, type Cc, type KartNetState, type PlayerInfo, type ResultEntry, type ServerMsg, type Standing,
 } from '../shared/protocol';
 import { SmkRom, type DriverSprites, type TrackInfo } from './rom/rom';
 import { loadRaceGfx } from './rom/race-gfx';
@@ -464,6 +464,7 @@ interface StartArgs {
   royale?: RoyaleState;
   start?: { x: number; y: number; a: number };
   balloons?: [number, number][];
+  cpuStarts?: ReadonlyMap<number, KartNetState>;
   track: ReturnType<SmkRom['loadTrack']>;
   cc: Cc;
   players: PlayerInfo[];
@@ -506,6 +507,7 @@ function startRace(a: StartArgs) {
     royale: a.royale,
     start: a.start,
     balloons: a.balloons,
+    cpuStarts: a.cpuStarts,
     sound,
   });
   // Online Battle Royale: people come in with drivers nobody had yet.
@@ -582,8 +584,8 @@ function runRoyaleOnline(world: WorldTrack, m: Extract<ServerMsg, { t: 'royaleSt
   if (m.broken.length) applyBreak(world, m.broken);
   const state = new RoyaleState(world, m.seed, m.zoneScale ?? 1);
   const out = new Map(m.balloons);
-  // This browser runs the bots if the server says so (the bots still in).
-  const cpus = m.host === m.selfId
+  // A host handoff can arrive while sprites are loading: use the current host, not the stale start packet.
+  const cpus = (net?.royaleHost ?? m.host) === m.selfId
     ? m.players.flatMap((p, slot) => (p.cpu && (out.get(p.id) ?? 1) > 0 ? [{ id: p.id, slot, skill: 0.6 + Math.random() * 0.4 }] : []))
     : [];
   gp = null;
@@ -593,7 +595,7 @@ function runRoyaleOnline(world: WorldTrack, m: Extract<ServerMsg, { t: 'royaleSt
   startRace({
     track: world, royale: state, cc: 100, players: m.players, items: true, battle: true, selfId: m.selfId,
     slot: Math.max(0, m.players.findIndex((p) => p.id === m.selfId)), cpus, startInMs: m.startInMs, online: true,
-    start: m.at, balloons: m.balloons,
+    start: m.at, balloons: m.balloons, cpuStarts: net?.latestKarts,
   });
 }
 
