@@ -439,7 +439,8 @@ export class Race {
       for (const c of this.cpus) {
         if (c.out || near2(c.kart, k) >= 10 || isInvincible(c.kart) || c.kart.spin > 0) continue;
         if (o.royale) o.channel.send({ t: 'pop', cpu: c.id });
-        spinOut(c.kart);
+        // (A star's touch spins round as a shell does, a frame longer: measured.)
+spinOut(c.kart, 'star');
       }
     }
 
@@ -450,7 +451,8 @@ export class Race {
       if (this.out) break;
       if (r.e & EFFECT_STAR && this.starTouchCooldown === 0 && near2(r, k) < 10) {
         if (o.battle && !isInvincible(k)) o.channel.send({ t: 'pop' });
-        spinOut(k);
+        // (A star's touch spins round as a shell does, a frame longer: measured.)
+spinOut(k, 'star');
         this.starTouchCooldown = 60;
       }
     }
@@ -670,14 +672,16 @@ export class Race {
       for (const r of remotes) {
         if (!(r.e & EFFECT_STAR) || r.f > 0 || isInvincible(k) || k.spin > 0 || near2(r, k) >= 10) continue;
         o.channel.send({ t: 'pop', cpu: c.id });
-        spinOut(k);
+        // (A star's touch spins round as a shell does, a frame longer: measured.)
+spinOut(k, 'star');
       }
       // A star: spin out and pop whoever it touches (other bots here; people check for themselves).
       if (k.star > 0) {
         for (const v of live) {
           if (v === c || v.out || isInvincible(v.kart) || v.kart.spin > 0 || near2(v.kart, k) >= 10) continue;
           o.channel.send({ t: 'pop', cpu: v.id });
-          spinOut(v.kart);
+          // (A star's touch spins round as a shell does, a frame longer: measured.)
+spinOut(v.kart, 'star');
         }
       }
     }

@@ -65,3 +65,9 @@ Raio (`record-lightning.mjs <núcleo> <rom> saída.json`): o Mario usa o raio; n
 $102A anda 4032 e 64 a menos a cada quadro por 60 quadros, depois −192 por 8 quadros e −129 (quase 2 voltas, sem
 voltar para a direção de antes), a velocidade cai 56 por quadro e volta a subir no quadro 70. Num jogador não
 foi medido (uma CPU teria de usar o raio).
+
+Toque da estrela (`record-star-touch.mjs <núcleo> <rom> saída.json 300`): o Mario pega uma estrela na largada e
+bate na CPU da frente. Ela é empurrada para longe por 8 quadros (uns 3 px por quadro; não feito no nosso) e então
+gira como no casco, mas com 65 quadros de 4097 em vez de 64: depois 64 a menos por quadro até 256, −192 por 9
+quadros, −1, +320 por 4 quadros; volta a andar 138 quadros depois do primeiro giro. O Mario, ao bater, caiu de 776
+para 417 de velocidade (uma medida só; não feito no nosso).

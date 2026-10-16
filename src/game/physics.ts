@@ -134,7 +134,7 @@ export interface Kart {
    * Spun round by a banana or the lightning (with spinFrom: the way it went, which it keeps going): it slows
    * down while it spins, each its own way (measured).
    */
-  slip: '' | 'banana' | 'lightning';
+  slip: '' | 'banana' | 'lightning' | 'star';
   /** Mushroom push frames left (zipper panels still use `boost`). */
   dash: number;
   /** In the air from a feather (its own arc). */
@@ -472,7 +472,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     k.turnRate = 0; k.slide = 0;
     k.angle += (t < 60 ? 4032 - 64 * t : t < 68 ? -192 : t === 68 ? -129 : 0) * ANG;
     if (k.spin === 0) { k.spinFrom = null; k.slip = ''; }
-  } else if (k.spin > 0 && k.spinFrom !== null && k.slip) {
+  } else if (k.spin > 0 && k.spinFrom !== null && k.slip === 'banana') {
     // On a banana (measured): 2560 a frame the other way for 77 frames (3 turns and a bit), then still until
     // it ends, facing the way it was.
     const t = SLIP_FRAMES - k.spin;
@@ -481,12 +481,12 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
     k.angle = t < SLIP_TURN_FRAMES ? k.angle - 2560 * ANG : k.spinFrom - 512 * ANG;
     if (k.spin === 0) { k.angle = k.spinFrom; k.spinFrom = null; k.slip = ''; }
   } else if (k.spin > 0 && k.spinFrom !== null) {
-    // Hit by a shell (measured): 4096 a frame for 64 frames, then 64 a frame less, 6 turns in all; it ends
-    // facing the way it was.
-    const t = SHELL_SPIN_FRAMES - k.spin;
+    // Hit by a shell or touched by a star (measured): 4097 a frame for 64 frames (a star's touch 65), then 64 a
+    // frame less, then a little back and forth, nearly 6 turns; it drives on facing about the way it was.
+    const full = k.slip === 'star' ? 65 : 64, t = full + SHELL_SPIN_FRAMES - 64 - k.spin;
     k.spin--;
-    k.angle += Math.max(0, t < 64 ? 4096 : 4096 - 64 * (t - 63)) * ANG;
-    if (k.spin === 0) { k.angle = k.spinFrom; k.spinFrom = null; }
+    k.angle += (t < full ? 4097 : t < full + 60 ? 4096 - 64 * (t - full + 1) : t < full + 69 ? -192 : t === full + 69 ? -1 : 320) * ANG;
+    if (k.spin === 0) { k.spinFrom = null; k.slip = ''; }
   } else if (k.spin > 0) { k.spin--; k.angle += 0.35; }
 
   // The body swings out in a fast turn (more in a power slide) and swings back when straightened.
@@ -544,7 +544,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   } else if (k.startBoost) {
     v += 50;
     if (v >= START_BOOST_SPEED) { v = START_BOOST_SPEED; k.startBoost = false; }
-  } else if (k.slip && k.spin > 0) {
+  } else if ((k.slip === 'banana' || k.slip === 'lightning') && k.spin > 0) {
     // Slipping on a banana: 8 a frame slower, the accelerator or not; struck by the lightning, 56.
     v = Math.max(0, v - (k.slip === 'lightning' ? ZAP_DECEL : SLIP_DECEL));
   } else if (input.accel && k.spin === 0 && k.star > 0) {
@@ -579,7 +579,7 @@ export function stepKart(k: Kart, input: Input, track: Track, geo: RaceGeometry,
   // Velocity follows the heading; on ice it slides. In a skid the kart drifts a little to the outside.
   const traction = surface === 'ice' ? 0.04 : 0.5;
   // (Slipping on a banana: on the way it went, whichever way it faces.)
-  const dir = k.slip && k.spin > 0 && k.spinFrom !== null ? k.spinFrom : k.angle - k.slide * 0.12;
+  const dir = k.slip && k.slip !== 'star' && k.spin > 0 && k.spinFrom !== null ? k.spinFrom : k.angle - k.slide * 0.12;
   const fx = Math.sin(dir), fy = -Math.cos(dir);
   k.vx += (fx * k.speed - k.vx) * traction;
   k.vy += (fy * k.speed - k.vy) * traction;
@@ -731,8 +731,8 @@ export function isInvincible(k: Pick<Kart, 'star' | 'ghost'>): boolean {
 }
 
 /** Spin out (hit by an item or a star kart). */
-/** A shell's hit spins the kart this long (2 s: measured in the original, a green shell). */
-export const SHELL_SPIN_FRAMES = 124;
+/** A shell's hit (or a star's touch) spins the kart this long before it drives on (measured in the original). */
+export const SHELL_SPIN_FRAMES = 138;
 
 /**
  * A banana: the kart spins round for this long (measured in the original, the same at any speed): it turns for
@@ -750,7 +750,7 @@ export const ZAP_DECEL = 56;
  * Spun round: a shell stops the kart dead for SHELL_SPIN_FRAMES, and a banana spins it while it slides on
  * (SLIP_FRAMES), as in the original; the rest (lightning, a star's touch...) not measured yet.
  */
-export function spinOut(k: Kart, shell: boolean | 'banana' | 'lightning' = false) {
+export function spinOut(k: Kart, shell: boolean | 'banana' | 'lightning' | 'star' = false) {
   if (isInvincible(k) || k.fall > 0) return;
   if (shell === 'banana' || shell === 'lightning') {
     if (k.spin > 0 && k.spinFrom !== null && shell === 'banana') return;
@@ -762,15 +762,16 @@ export function spinOut(k: Kart, shell: boolean | 'banana' | 'lightning' = false
     k.mtArmed = false;
     return;
   }
-  k.slip = '';
   if (shell) {
-    k.spin = SHELL_SPIN_FRAMES;
     k.spinFrom = k.spin > 0 && k.spinFrom !== null ? k.spinFrom : k.angle;
+    k.spin = SHELL_SPIN_FRAMES + (shell === 'star' ? 1 : 0);
+    k.slip = shell === 'star' ? 'star' : '';
     k.speed = 0; k.vx = 0; k.vy = 0;
     k.boost = k.dash = k.mtBoost = k.turnRate = 0;
     k.mtArmed = false;
     return;
   }
+  k.slip = '';
   k.spinFrom = null;
   k.spin = 50;
   k.speed *= 0.2;

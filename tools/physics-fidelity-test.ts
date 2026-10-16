@@ -136,21 +136,31 @@ for (let c = 0; c < 4; c++) {
   }
 }
 
-// 7. Hit by a green shell (a CPU on the grid, with the DSP-1 answered): stopped dead, 6 turns, facing the way
-// it was. The heading's step frame by frame.
+// 7. Hit by a green shell (a CPU on the grid, with the DSP-1 answered), or touched by a kart with a star (which
+// spins it the same way, recorded to the end): stopped dead, nearly 6 turns, the heading's step frame by frame,
+// and the frame it drives on.
 {
   const { spinOut, SHELL_SPIN_FRAMES } = await import('../src/game/physics');
-  const k = createKart(flat, 0, 0, 100);
-  k.speed = 48 / 256; k.vy = -k.speed;
-  const start = k.angle;
-  spinOut(k, true);
-  const orig: number[] = ref.shellSpin.facingSteps;
-  const ours: number[] = [];
-  let prev = k.angle;
-  for (let i = 0; i < SHELL_SPIN_FRAMES; i++) { stepKart(k, NO_INPUT, flat, geo, [], i); ours.push(Math.round(((k.angle - prev) * 65536) / (Math.PI * 2))); prev = k.angle; }
-  const turnsO = orig.reduce((a, b) => a + b, 0) / 65536, turnsU = (k.angle - start) === 0 ? 6 : NaN;
-  let same = 0; for (let i = 0; i < 120; i++) if (Math.abs(ours[i] - orig[i]) <= 1) same++;
-  check(k.speed === 0 && same >= 110 && Math.abs(turnsO - 6) < 0.1 && turnsU === 6, `rodada do casco: ${same} de 120 quadros com o mesmo giro, ${turnsO.toFixed(2)} voltas no original, kart parado e de volta à direção`);
+  const spin = (how: true | 'star') => {
+    const k = createKart(flat, 0, 0, 100);
+    k.speed = 48 / 256; k.vy = -k.speed;
+    spinOut(k, how);
+    const steps: number[] = [];
+    let prev = k.angle, moved = -1;
+    for (let i = 0; i < SHELL_SPIN_FRAMES + 4; i++) {
+      stepKart(k, { ...NO_INPUT, accel: true }, flat, geo, [], i);
+      if (moved < 0 && k.speed > 0) moved = i;
+      steps.push(Math.round(((k.angle - prev) * 65536) / (Math.PI * 2)));
+      prev = k.angle;
+    }
+    return { steps, moved };
+  };
+  const same = (a: number[], b: number[]) => b.filter((v, i) => Math.abs(a[i] - v) <= 1).length;
+  const sum = (a: number[]) => a.reduce((x, y) => x + y, 0) / 65536;
+  const shell = spin(true), star = spin('star');
+  const oShell: number[] = ref.shellSpin.facingSteps, oStar: number[] = ref.starSpin.facingSteps;
+  check(same(shell.steps, oShell) === oShell.length && same(star.steps, oStar) === oStar.length && star.moved === ref.starSpin.moveAt && shell.moved === SHELL_SPIN_FRAMES - 1,
+    `rodada: casco ${same(shell.steps, oShell)} de ${oShell.length} quadros com o mesmo giro, estrela ${same(star.steps, oStar)} de ${oStar.length} (${sum(oStar).toFixed(3)} voltas no original, ${sum(star.steps.slice(0, oStar.length)).toFixed(3)} na nossa), anda de novo no quadro ${star.moved} (original ${ref.starSpin.moveAt})`);
 }
 
 // 7b. Slipping on a banana (Mario Circuit 1, 50cc, with the DSP-1 answered): 3 turns and a bit, on the way it
