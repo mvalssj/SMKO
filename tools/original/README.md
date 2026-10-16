@@ -55,3 +55,8 @@ está certa na emulação; sem o chip verdadeiro não dá para decidir.
 Com os sprites projetados, os itens acertam na análise: um casco verde da largada acerta a CPU parada à frente
 (`dsp-objects.mjs <núcleo> <rom> 4 150 saída.json`). Uma banana mudada de lugar direto na memória não acerta (outros
 dados do objeto não acompanham); a escorregada na banana ainda não foi medida.
+
+Caixas de item (`box-tile-writer.mjs <núcleo> <rom>`): a caixa é um bloco do mapa da pista em `$7F:0000`; um
+watchpoint de escrita nele mostra a rotina que pega a caixa (`$C1:B762`, troca o bloco pelo de caixa usada pela
+tabela em `$C1:B72B` e soma 1 em `$1EB4`) e a que as devolve (`$C1:BECA`: quando `$1EB4` chega a 30, todas as caixas
+pegas, guardadas em `$7F:DF80`, voltam e a conta zera). Não há volta por tempo.
