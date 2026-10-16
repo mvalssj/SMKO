@@ -932,7 +932,8 @@ export class Race {
     if (!o.spectate && !this.out) sprites.push({
       x: me.x, y: me.y, angle: kartFacing(me), character: charOf(o.selfId),
       scale: (me.fall > 0 ? me.fall / 70 : 1) * (me.shrink > 0 ? 0.5 : 1), lift: kartHeight(me),
-      alpha: me.ghost > 0 ? 0.45 : 1, flash: me.star > 0,
+      // Boo: the original flickers our own kart (drawn every other frame, measured).
+      alpha: me.ghost > 0 && this.frame % 2 === 0 ? 0 : 1, flash: me.star > 0,
       smoke: Math.abs(me.slide) > 0.3 && me.speed > 2, dust: me.speed > 1 && me.fall === 0 && me.air === 0 && terrainAt(o.track, me.x, me.y) === 'slow',
       boost: isBoosting(me),
       balloons: o.battle ? this.balloons.get(o.selfId) ?? BATTLE_BALLOONS : 0, balloonPalette: this.balloonPalette(o.selfId),
