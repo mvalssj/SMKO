@@ -13,7 +13,6 @@ import { readInput } from './input';
 import {
   CHARACTER_CLASS, KART_CLASSES, NO_INPUT, STEP_MS, applyBreak, countdownInput, coverTiles, createKart, featherJump, isInvincible,
   isBoosting, kartFacing, kartHeight, raceGeometry, terrainAt, restoreTiles, spinOut, stepKart, tileCluster, type Bumper, type Kart, type SavedTile,
-  genreAt,
 } from './physics';
 import { WORLD_H, WORLD_W, insideZone, wrapDX, wrapDY, wrapX, wrapY, type ZoneNow } from '../../shared/royale';
 import { BotDriver, type Rival } from '../royale/bot';
@@ -375,16 +374,17 @@ export class Race {
       this.item = null;
     }
 
-    // Item boxes and coins under the kart.
+    // Item boxes and coins: test the whole kart footprint, not only its exact centre. In the open Battle
+    // Royale world this is important because the original 16px item-box tiles sit beside one another.
     if (this.pickupCooldown > 0) this.pickupCooldown--;
     if (o.items && racing && k.air === 0 && k.fall === 0 && this.pickupCooldown === 0 && !this.out) {
-      const tx = Math.floor(k.x / TILE), ty = Math.floor(k.y / TILE);
-      const g = genreAt(o.track, k.x, k.y);
-      if (g === Genre.ItemBlock && !this.item && now >= this.rollingUntil) {
-        o.channel.send({ t: 'box', tiles: tileCluster(o.track, tx, ty, Genre.ItemBlock, 2) });
+      const box = pickupTile(o.track, k.x, k.y, Genre.ItemBlock);
+      const coin = box ? null : pickupTile(o.track, k.x, k.y, Genre.Coin);
+      if (box && !this.item && now >= this.rollingUntil) {
+        o.channel.send({ t: 'box', tiles: tileCluster(o.track, box.tx, box.ty, Genre.ItemBlock, 2) });
         this.pickupCooldown = 20;
-      } else if (g === Genre.Coin) {
-        o.channel.send({ t: 'coin', tiles: tileCluster(o.track, tx, ty, Genre.Coin, 1) });
+      } else if (coin) {
+        o.channel.send({ t: 'coin', tiles: tileCluster(o.track, coin.tx, coin.ty, Genre.Coin, 1) });
         this.pickupCooldown = 6;
       }
     }
@@ -625,16 +625,16 @@ export class Race {
         o.channel.send({ t: 'use', cpu: c.id, x: k.x, y: k.y, a: k.angle, back: use.back });
         c.item = null;
       }
-      // Boxes and coins under the kart.
+      // Boxes and coins in the kart's footprint (the same forgiving pickup as the human player).
       if (c.pickupCooldown) c.pickupCooldown--;
       if (k.air === 0 && k.fall === 0 && !c.pickupCooldown) {
-        const g = genreAt(o.track, k.x, k.y);
-        const tx = Math.floor(k.x / TILE), ty = Math.floor(k.y / TILE);
-        if (g === Genre.ItemBlock && !c.item && !rolling) {
-          o.channel.send({ t: 'box', cpu: c.id, tiles: tileCluster(o.track, tx, ty, Genre.ItemBlock, 2) });
+        const box = pickupTile(o.track, k.x, k.y, Genre.ItemBlock);
+        const coin = box ? null : pickupTile(o.track, k.x, k.y, Genre.Coin);
+        if (box && !c.item && !rolling) {
+          o.channel.send({ t: 'box', cpu: c.id, tiles: tileCluster(o.track, box.tx, box.ty, Genre.ItemBlock, 2) });
           c.pickupCooldown = 20;
-        } else if (g === Genre.Coin) {
-          o.channel.send({ t: 'coin', cpu: c.id, tiles: tileCluster(o.track, tx, ty, Genre.Coin, 1) });
+        } else if (coin) {
+          o.channel.send({ t: 'coin', cpu: c.id, tiles: tileCluster(o.track, coin.tx, coin.ty, Genre.Coin, 1) });
           c.pickupCooldown = 6;
         }
       }
@@ -1015,6 +1015,22 @@ export class Race {
 /** Distance between two karts or items, the short way round (the Battle Royale world wraps round). */
 function near2(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return Math.hypot(wrapDX(a.x - b.x), wrapDY(a.y - b.y));
+}
+
+/** A 16px box/coin is collected when any part of a kart overlaps it, as in the original. */
+function pickupTile(track: Track, x: number, y: number, genre: number): { tx: number; ty: number } | null {
+  const cols = track.world ? track.world.cols : 128;
+  const rows = track.world ? track.world.rows : 128;
+  // Centre first, then the four corners of the kart's practical 16px collision footprint.
+  for (const [dx, dy] of [[0, 0], [-8, -8], [8, -8], [-8, 8], [8, 8]] as const) {
+    let tx = Math.floor((x + dx) / TILE), ty = Math.floor((y + dy) / TILE);
+    if (track.world) {
+      tx = (tx % cols + cols) % cols;
+      ty = (ty % rows + rows) % rows;
+    } else if (tx < 0 || ty < 0 || tx >= cols || ty >= rows) continue;
+    if (track.genres[ty * cols + tx] === genre) return { tx, ty };
+  }
+  return null;
 }
 
 function netState(id: number, k: Kart): KartNetState {
