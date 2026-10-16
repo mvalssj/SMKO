@@ -157,6 +157,7 @@ No menu principal: **BATTLE ROYALE**. São 100 pilotos num mundo aberto que junt
   - Fora da área, o Lakitu mostra a placa de contramão e você perde um balão a cada 4 s.
   - O contador de pilotos vivos fica no lugar das vidas do GP. Quem perde todos os balões assiste aos outros (← → troca de piloto).
 - **Os bots:**
+  - Os 100 pilotos largam em vagas separadas na arena Battle Course 4; os bots não ficam em regiões distantes enquanto o jogador espera pela primeira luta.
   - Dentro de uma pista, seguem a linha de corrida da própria ROM, os mesmos dados de IA das CPUs.
   - Entre pistas e para entrar na área segura, usam um mapa de distâncias do mundo inteiro.
   - Pegam caixas de item e usam os itens como os jogadores: cascos em quem está à frente, banana em quem vem atrás, estrela para atropelar.

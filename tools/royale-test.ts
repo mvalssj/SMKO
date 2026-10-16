@@ -11,7 +11,7 @@ import { BotDriver } from '../src/royale/bot';
 import { createKart, raceGeometry, stepKart, terrainAt, terrainOf } from '../src/game/physics';
 import { worldMapPoint } from '../src/game/renderer';
 import {
-  MARGIN_TILES, COURSE_TILES, GAP_TILES, WORLD_H, WORLD_REGIONS, WORLD_W, insideZone, mulberry32, worldCourseAt, wrapDist,
+  MARGIN_TILES, COURSE_TILES, GAP_TILES, ROYALE_PLAYERS, WORLD_H, WORLD_REGIONS, WORLD_W, insideZone, mulberry32, worldCourseAt, wrapDist,
   zoneAt, zoneCircles,
 } from '../shared/royale';
 import { NO_INPUT } from '../src/game/physics';
@@ -105,6 +105,11 @@ const starts = Array.from({ length: 100 }, (_, slot) => st.spawn(slot));
 check(starts.every((s) => s.x >= arena.x0 * TILE && s.x < (arena.x0 + COURSE_TILES) * TILE
   && s.y >= arena.y0 * TILE && s.y < (arena.y0 + COURSE_TILES) * TILE
   && !['wall', 'fall'].includes(terrainAt(world, s.x, s.y))), '100 lugares de largada sobre o chão da arena');
+check(new Set(starts.map((s) => `${s.x},${s.y}`)).size === ROYALE_PLAYERS
+  && starts.every((s, slot) => {
+    const b = st.spawn(slot, slot % 8, true);
+    return b.x === s.x && b.y === s.y && b.angle === s.angle;
+  }), '99 bots e jogador partem em vagas únicas da mesma arena');
 for (const width of [256, 384]) {
   const pad = (width - 256) / 2;
   check(starts.every((s) => {
@@ -116,7 +121,7 @@ const rand = mulberry32(5);
 const geo = raceGeometry(world);
 const bots = Array.from({ length: 99 }, (_, i) => {
   const k = createKart(world, 0, i % 8, 100);
-  // Match Race's CPU placement: a bot starts in its driver's region, not on the human arena grid.
+  // Match Race's CPU placement: every bot gets its own slot beside the human in the arena.
   const s = st.spawn(i + 1, i % 8, true);
   Object.assign(k, { x: s.x, y: s.y, angle: s.angle });
   k.safe = { ...s };
@@ -138,7 +143,9 @@ const ms = (performance.now() - t0) / (secs * 60);
 const perMin = (n: number) => (n / bots.length) * (60 / secs);
 const dist = perMin(bots.reduce((a, b) => a + b.dist, 0));
 const falls = perMin(bots.reduce((a, b) => a + b.falls, 0));
-check(dist > 4000, `bots andam: ${Math.round(dist)} px por minuto em média`);
+check(dist > 1600, `bots andam mesmo na largada lotada: ${Math.round(dist)} px por minuto em média`);
+check(bots.filter((b) => b.dist > 120).length >= 60,
+  `maioria dos bots sai da largada: ${bots.filter((b) => b.dist > 120).length} de 99`);
 check(falls < 5, `bots caem pouco: ${falls.toFixed(1)} quedas por minuto em média`);
 check(ms < 8, `99 bots: ${ms.toFixed(2)} ms por quadro`);
 console.log(failed ? 'houve falhas' : 'tudo certo');
