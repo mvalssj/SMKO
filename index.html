@@ -6,8 +6,13 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#000000" />
-  <title>SMKO</title>
-  <link rel="icon" href="data:," />
+  <meta name="application-name" content="SMKO" />
+  <meta name="apple-mobile-web-app-title" content="SMKO" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>SMKO — Super Mario Kart Online</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/smko-192.png" />
+  <link rel="apple-touch-icon" href="/icons/smko-192.png" />
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
@@ -76,6 +81,8 @@
   </div>
   <div id="toast" hidden></div>
   <div class="corner-btns">
+    <button id="btn-install" class="fullscreen-btn" title="Instalar SMKO como aplicativo" hidden>⇩ instalar</button>
+    <button id="btn-notifications" class="fullscreen-btn" title="Ativar avisos do SMKO" hidden>🔔 avisos</button>
     <button id="btn-map" class="fullscreen-btn" title="Esconder o mapa e mostrar a corrida na tela toda (M)">▤ sem mapa</button>
     <button id="btn-planet" class="fullscreen-btn" title="Battle Royale: chão curvo como um planeta">◠ curvo</button>
     <button id="btn-wide" class="fullscreen-btn" title="Tela larga 16:9 sem distorcer">▭ 16:9</button>

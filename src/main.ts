@@ -18,6 +18,7 @@ import { Ceremony } from './menu/ceremony';
 import { MUSIC, Sound } from './audio/sound';
 import { saveTrial, winCup } from './menu/progress';
 import { FADES, black, fadeIn, fadeOut, hold } from './fade';
+import { setupPwa } from './pwa';
 import type { Board } from './menu/results';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -662,7 +663,7 @@ $('btn-fullscreen').addEventListener('click', () => {
 // Widescreen: the race grows to 348x224 (more course at the sides). ROM-native menus, rankings and the
 // ceremony are centred in the same 16:9 stage so their complete artwork is never stretched or cropped.
 const WIDE_W = 348;
-let wide = localStorageGet('smko-wide') === '1';
+let wide = localStorageGet('smko-wide') !== '0';
 function raceWidth() { return wide ? WIDE_W : SCREEN_W; }
 function applyWide() {
   document.documentElement.classList.toggle('wide', wide);
@@ -721,6 +722,7 @@ function showToast(text: string, ms = 2500) {
   clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => { t.hidden = true; }, ms);
 }
+setupPwa({ toast: showToast });
 setupControls((text) => showToast(text));
 // Messages from the server's administrator stay a while longer.
 NetClient.notice = (text) => showToast(text, 10_000);
