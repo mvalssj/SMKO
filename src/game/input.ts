@@ -1,6 +1,7 @@
 // Keyboard input (gamepads and the touch controls arrive as the same keys, see src/controls.ts).
 // Keyboard: arrows or WASD to steer/accelerate/brake, X/Space also accelerates, Z brakes, Shift drifts,
-// E / Q / Ctrl uses the item (hold brake to throw it behind).
+// E / Q / Ctrl uses the item (hold brake to throw it behind; on a pad or the touch controls, up + item throws a
+// banana forward, as on the SNES: on the keyboard up is the accelerator, so it never does).
 
 import type { Input } from './physics';
 
@@ -24,5 +25,6 @@ export function readInput(): Input {
     right: k('ArrowRight', 'KeyD'),
     drift: k('ShiftLeft', 'ShiftRight', 'KeyC'),
     item: k('KeyE', 'KeyQ', 'ControlLeft', 'ControlRight'),
+    up: k('PadUp'),
   };
 }

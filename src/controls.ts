@@ -1,7 +1,8 @@
 // Gamepads and the on-screen touch controls. Both are turned into the keyboard's keys (synthetic key events
 // on the window), so the menus, races and boards need no code of their own for them. The layout follows the
 // SNES pad: B accelerates / confirms, Y brakes / goes back, A and X use the item, L and R hop, Select hides or
-// shows the course map.
+// shows the course map. Up on the D-pad or the stick also holds PadUp: with the accelerator a button of its own
+// here, up + item throws a banana forward, as on the SNES.
 
 /** SNES button -> the key it stands for. */
 const SNES: Record<string, string> = {
@@ -15,6 +16,8 @@ const SNES: Record<string, string> = {
 const PAD_BUTTONS: Record<number, string> = { 0: 'B', 1: 'A', 2: 'Y', 3: 'X', 4: 'L', 5: 'R', 6: 'Y', 7: 'B', 8: 'SELECT', 9: 'START' };
 const PAD_DIRS: Record<number, string> = { 12: 'ArrowUp', 13: 'ArrowDown', 14: 'ArrowLeft', 15: 'ArrowRight' };
 const STICK_DEADZONE = 0.5;
+/** Held with up on a pad's (or the touch) D-pad: see readInput's `up`. */
+const PAD_UP = 'PadUp';
 
 /** Keys held by each source; their union is what the page sees. */
 const sources = { pad: new Set<string>(), touch: new Set<string>() };
@@ -42,11 +45,12 @@ function pollPads() {
       if (!b.pressed) return;
       if (PAD_BUTTONS[i]) now.add(SNES[PAD_BUTTONS[i]]);
       if (PAD_DIRS[i]) now.add(PAD_DIRS[i]);
+      if (PAD_DIRS[i] === 'ArrowUp') now.add(PAD_UP);
     });
     const [x = 0, y = 0] = pad.axes;
     if (x < -STICK_DEADZONE) now.add('ArrowLeft');
     if (x > STICK_DEADZONE) now.add('ArrowRight');
-    if (y < -STICK_DEADZONE) now.add('ArrowUp');
+    if (y < -STICK_DEADZONE) { now.add('ArrowUp'); now.add(PAD_UP); }
     if (y > STICK_DEADZONE) now.add('ArrowDown');
   }
   if (now.size !== sources.pad.size || [...now].some((c) => !sources.pad.has(c))) {
@@ -108,7 +112,7 @@ function fingerKeys(start: HTMLElement, x: number, y: number): { el: HTMLElement
 
 function refreshTouch() {
   const now = new Set<string>();
-  for (const f of fingers.values()) for (const k of f.keys) now.add(k);
+  for (const f of fingers.values()) for (const k of f.keys) { now.add(k); if (k === 'ArrowUp') now.add(PAD_UP); }
   document.querySelectorAll<HTMLElement>('#touch [data-btn]').forEach((b) => {
     b.classList.toggle('down', [...fingers.values()].some((f) => f.el === b && f.keys.length > 0));
   });

@@ -390,7 +390,7 @@ export class Race {
       this.readyAt = this.rollingUntil + ROULETTE_SHOW_MS;
       o.channel.send({ t: 'stopRoll' });
     } else if (pressed && racing && this.item && now >= this.readyAt && k.fall === 0 && !this.finishedAt && !this.out) {
-      o.channel.send({ t: 'use', x: k.x, y: k.y, a: k.angle, back: input.brake, s: Math.max(0, k.speed) });
+      o.channel.send({ t: 'use', x: k.x, y: k.y, a: k.angle, back: input.brake, s: Math.max(0, k.speed), fwd: !!input.up });
       if (this.item === 'greenShell' || this.item === 'redShell') o.sound?.sfx0(SFX0.shell);
       this.item = null;
     }
@@ -425,7 +425,7 @@ export class Race {
       ];
       for (const [cpu, v] of victims) {
         if ((cpu ?? o.selfId) === e.owner && fresh) continue;
-        if (v.air > 0 || v.fall > 0 || near2(e, v) >= ITEM_HIT_DISTANCE) continue;
+        if (v.air > 0 || v.fall > 0 || e.lift > 0 || near2(e, v) >= ITEM_HIT_DISTANCE) continue;
         o.channel.send({ t: 'hit', entity: e.id, cpu });
         this.entities.delete(e.id);
         if (e.kind === 'poison') { if (!isInvincible(v)) v.shrink = SHRINK_FRAMES; }
@@ -968,7 +968,7 @@ spinOut(v.kart, 'star');
     for (const e of this.entities.values()) {
       // Shells spin: their picture flips every few frames while they move.
       const moving = e.kind === 'greenShell' || e.kind === 'redShell' || e.kind === 'fireball';
-      objects.push({ x: e.x, y: e.y, lift: 0, item: true, frame: ITEM_FRAME[e.kind], mirror: moving && (frame >> 2) % 2 === 1 });
+      objects.push({ x: e.x, y: e.y, lift: e.lift, item: true, frame: ITEM_FRAME[e.kind], mirror: moving && (frame >> 2) % 2 === 1 });
     }
 
     // Course map: everyone's head; our own drawn last (on top).

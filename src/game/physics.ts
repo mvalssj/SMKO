@@ -17,6 +17,8 @@ export interface Input {
   /** L / R: hop, and power slide while held in a turn. */
   drift: boolean;
   item?: boolean;
+  /** Up on a pad's D-pad (not the keyboard's): up + item throws a banana forward. */
+  up?: boolean;
 }
 
 /** Game speed units (1/256 px per frame) per px per frame. */

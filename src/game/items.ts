@@ -4,6 +4,10 @@ import type { NetEntity } from '../../shared/protocol';
 import type { Track } from '../rom/rom';
 import { terrainAt } from './physics';
 import { wrapDX, wrapDY, wrapX, wrapY } from '../../shared/royale';
+import { BANANA_FLY_SPEED } from '../../shared/items';
+
+/** How high a banana thrown forward goes (px; the arc's shape not measured). */
+const BANANA_FLY_HEIGHT = 24;
 
 /** A shell spawned without its own speed (an older server). */
 const SHELL_SPEED = 4.6;
@@ -23,18 +27,33 @@ export interface Entity extends NetEntity {
   vy: number;
   /** Last simulated race frame. */
   at: number;
+  /** Height above the floor (a banana in flight). */
+  lift: number;
   dead: boolean;
 }
 
 export function createEntity(e: NetEntity): Entity {
   const speed = e.kind === 'greenShell' || e.kind === 'redShell' ? e.s ?? SHELL_SPEED : e.kind === 'fireball' ? FIREBALL_SPEED : 0;
-  return { ...e, vx: Math.sin(e.a) * speed, vy: -Math.cos(e.a) * speed, at: e.frame, dead: false };
+  return { ...e, vx: Math.sin(e.a) * speed, vy: -Math.cos(e.a) * speed, at: e.frame, dead: false, lift: 0 };
 }
 
 /** Advances an entity to `frame`. `targetPos` finds where a red shell's target is. */
 export function advanceEntity(e: Entity, track: Track, frame: number, targetPos: (id: number) => { x: number; y: number } | null) {
   while (!e.dead && e.at < frame) {
     e.at++;
+    if (e.kind === 'banana' && e.fly) {
+      // Thrown forward: over everything (walls too) until it lands; into a pit, it's gone.
+      const age = e.at - e.frame;
+      if (age <= e.fly) {
+        e.x += Math.sin(e.a) * BANANA_FLY_SPEED;
+        e.y -= Math.cos(e.a) * BANANA_FLY_SPEED;
+        if (track.world) { e.x = wrapX(e.x); e.y = wrapY(e.y); }
+        const t = age / e.fly;
+        e.lift = age < e.fly ? 4 * BANANA_FLY_HEIGHT * t * (1 - t) : 0;
+        if (age === e.fly && terrainAt(track, e.x, e.y) === 'fall') e.dead = true;
+      }
+      continue;
+    }
     if (e.kind === 'banana' || e.kind === 'poison' || e.kind === 'egg') return;
     const age = e.at - e.frame;
     if (age > (e.kind === 'redShell' ? RED_LIFE : e.kind === 'fireball' ? FIREBALL_LIFE : GREEN_LIFE)) { e.dead = true; return; }

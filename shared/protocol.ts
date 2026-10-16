@@ -60,6 +60,8 @@ export interface NetEntity {
   target: number | null;
   /** A shell's speed, px a frame (missing: SHELL_SPEED). */
   s?: number;
+  /** A banana thrown forward: frames it flies (at BANANA_FLY_SPEED along `a`) before it lands. */
+  fly?: number;
 }
 
 export type EffectKind = 'mushroom' | 'star' | 'feather' | 'ghost' | 'lightning';
@@ -137,7 +139,8 @@ export type ClientMsg =
   | { t: 'coin'; tiles: number[]; cpu?: number }
   /** Use the held item; `back` throws a shell behind (bananas always go behind). */
   /** `s`: the thrower's speed (px a frame): a shell thrown forward goes that much faster. */
-  | { t: 'use'; x: number; y: number; a: number; back: boolean; cpu?: number; s?: number }
+  /** `fwd`: up held (a banana is thrown forward instead of dropped behind). */
+  | { t: 'use'; x: number; y: number; a: number; back: boolean; cpu?: number; s?: number; fwd?: boolean }
   /** The item button pressed while the roulette spins: it stops (as in the original). */
   | { t: 'stopRoll'; cpu?: number }
   /** This client's kart (or, from the host, CPU `cpu`) was hit by an entity. */

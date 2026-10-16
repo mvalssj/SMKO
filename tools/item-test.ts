@@ -88,6 +88,20 @@ for (let f = 1; f <= 200 && !red.dead; f++) {
   minD = Math.min(minD, Math.hypot(red.x - target.x, red.y - target.y));
 }
 check('casco vermelho persegue o alvo', minD < 8, `menor distância ${minD.toFixed(1)}`);
+// A banana thrown forward (up + item): flies 3 px a frame for 84 frames, up in the air, then lies there.
+const sentFwd: { to: number | 'all'; msg: ServerMsg }[] = [];
+const auth4 = new ItemAuthority({ leader: [0, 0, 0, 16, 0, 0, 0, 0, 0], middle: [0, 0, 0, 16, 0, 0, 0, 0, 0], back: [0, 0, 0, 16, 0, 0, 0, 0, 0] },
+  (to, msg) => sentFwd.push({ to, msg }), clock, () => clock, () => 0.5);
+auth4.addPlayer(1);
+auth4.handle(1, { t: 'box', tiles: [7] });
+clock += ROULETTE_MS + 1; auth4.tick();
+auth4.handle(1, { t: 'use', x: k.x, y: k.y, a: 0, back: false, fwd: true });
+const spawned = [...sentFwd].reverse().find((m) => m.msg.t === 'spawn')?.msg;
+const ban = spawned && spawned.t === 'spawn' ? createEntity(spawned.e) : null;
+let midAir = false;
+if (ban) for (let f = 1; f <= 120 && !ban.dead; f++) { advanceEntity(ban, track, ban.frame + f, () => null); if (f === 42) midAir = ban.lift > 0; }
+check('banana jogada para a frente voa uns 250 px e fica', !!ban && ban.kind === 'banana' && !ban.dead && midAir && ban.lift === 0 && Math.abs(k.y - ban.y - (12 + 252)) < 1 && Math.abs(ban.x - k.x) < 1,
+  ban ? `caiu ${(k.y - ban.y).toFixed(0)} px à frente` : 'não saiu');
 const g = rom.loadItemGraphics(track.colors);
 check('ícones dos 9 itens carregados', g.icons.length === 9 && g.icons.every((i) => i.pixels.some((v, n) => n % 4 === 3 && v > 0)));
 console.log(JSON.stringify(rom.itemOdds(rom.tracks[19])));

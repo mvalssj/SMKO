@@ -22,6 +22,9 @@ export const ROULETTE_MS = ROULETTE_SPIN_MS + ROULETTE_SHOW_MS;
 export const BOX_RESTORE_COUNT = 30;
 /** A shell's own speed, px a frame (the thrower's is added): the original's 768 / 256. */
 export const SHELL_BASE_SPEED = 3;
+/** A banana thrown forward flies 3 px a frame for 84 frames (about 240 px), then lands (measured in the original). */
+export const BANANA_FLY_SPEED = 3;
+export const BANANA_FLY_FRAMES = 84;
 export const MAX_COINS = 10;
 /** Every Grand Prix race starts with 5 coins (measured: 50cc top speed 823 = 783 + 5 coins x 8). */
 export const START_COINS = 5;
@@ -191,8 +194,9 @@ export class ItemAuthority {
         break;
       default: {
         const kind = item as EntityKind;
-        // Bananas are dropped behind; shells are thrown forward unless `back`.
-        const behind = kind === 'banana' || msg.back;
+        // Bananas are dropped behind (thrown forward with up held: `fwd`); shells are thrown forward unless `back`.
+        const thrown = kind === 'banana' && msg.fwd === true && !msg.back;
+        const behind = (kind === 'banana' && !thrown) || msg.back;
         const a = behind && kind !== 'banana' ? msg.a + Math.PI : msg.a;
         const dist = behind ? -14 : 12;
         // A shell goes 3 px a frame plus the speed of the kart that threw it forward (measured in the original:
@@ -205,6 +209,7 @@ export class ItemAuthority {
           frame: this.frame(),
           target: kind === 'redShell' && !behind ? this.playerAhead(id) : null,
           ...(shell ? { s: SHELL_BASE_SPEED + (behind ? 0 : thrower) } : {}),
+          ...(thrown ? { fly: BANANA_FLY_FRAMES } : {}),
         };
         this.entities.set(e.id, e);
         this.send('all', { t: 'spawn', e });
