@@ -180,9 +180,6 @@ export class BotDriver {
   private useBack = false;
   private itemSince = 0;
   private heldItem: ItemKind | null = null;
-  /** Frames left racing round this course before moving on to another (a bot doesn't stay put forever). */
-  private roamAt: number;
-  /** The racing line's target is behind something (a wall): steer round with the feelers. */
   private blocked = false;
   private lastAim = 0;
   private rescued = false;
@@ -190,9 +187,7 @@ export class BotDriver {
   private stuckCount = 0;
   private navUntil = 0;
 
-  constructor(private track: WorldTrack, readonly id: number, readonly skill: number, private rand: () => number) {
-    this.roamAt = 60 * (20 + Math.floor(rand() * 40));
-  }
+  constructor(private track: WorldTrack, readonly id: number, readonly skill: number, private rand: () => number) {}
 
   /** Item to use this frame (and whether to throw it backwards). */
   wantsItem(): { back: boolean } | null {
@@ -330,9 +325,6 @@ export class BotDriver {
     const margin = 64;
     const outside = !insideZone({ ...v.zone, r: Math.max(0, v.zone.r - margin) }, k.x, k.y)
       || (v.zone.r < 1400 && !insideZone(v.next, k.x, k.y));
-    const roam = v.frame >= this.roamAt;
-    if (roam && v.frame >= this.roamAt + 60 * 15) this.roamAt = v.frame + 60 * (20 + Math.floor(this.rand() * 40));
-    // A rival with a star coming: get out of its way.
     if (near && near.star && nearD < 120) {
       this.plan = { kind: 'seek', x: wrapX(k.x - wrapDX(near.x - k.x) * 2), y: wrapY(k.y - wrapDY(near.y - k.y) * 2) };
       return;
@@ -352,9 +344,16 @@ export class BotDriver {
         return;
       }
     }
+    // Prefer a visible opponent over lapping the same home course forever. Pick up an item first
+    // when there is a box nearby; with a weapon, actively close the gap before throwing it.
+    if (near && nearD < (v.item ? 600 : 320) && !outside && this.inSight(k, near)) {
+      this.plan = { kind: 'seek', x: near.x, y: near.y };
+      return;
+    }
     const here = v.frame < this.navUntil ? -1 : this.courseAt(k.x, k.y);
-    // On a course, inside the safe area: race round it (until it's time to roam to the next one).
-    if (here >= 0 && !outside && !(roam && v.frame < this.roamAt + 60 * 15)) {
+    // Follow the world-wide distance map toward the next fight, not just the current course.
+    // While it is being prepared, keep driving on the ROM's racing line instead of standing still.
+    if (here >= 0 && !outside && !v.nav.ahead(k.x, k.y, 8)) {
       if (here !== this.course) { this.course = here; this.area = areaAt(this.track.world.courses[here].ai, k.x, k.y, 0); }
       // Stay inside the safe area: if the line heads out of it, find the way instead.
       const t = this.track.world.courses[here].path[this.area];
@@ -365,19 +364,20 @@ export class BotDriver {
       }
     }
     this.plan = { kind: 'nav' };
-    // Roaming: aim for a random point a long way off inside the safe area (the map takes us there).
-    if (roam && !outside && this.roamGoal === null) {
-      const choices = v.spawns.filter((s) => insideZone(v.zone, s.x, s.y) && dist(s) > 900);
-      this.roamGoal = choices.length ? choices[Math.floor(this.rand() * choices.length)] : null;
-    }
-    if (!roam) this.roamGoal = null;
-    if (this.roamGoal && !outside) this.plan = { kind: 'seek', ...this.roamGoal };
-    if (this.plan.kind === 'seek' && !this.inSight(k, this.plan)) {
-      // Too far to see: head there along the map's way as long as the map leads roughly that way.
-      this.plan = { kind: 'nav' };
-    }
+    // After reaching the rally point, patrol its nearby roads rather than park at a zero-distance tile.
+    const ahead = v.nav.ahead(k.x, k.y, 8);
+    if (!outside && ahead && dist(ahead) < 24) {
+      if (!this.roamGoal || dist(this.roamGoal) < 40 || v.frame >= this.roamUntil) {
+        const choices = v.spawns.filter((s) => dist(s) > 120 && dist(s) < 450
+          && insideZone(v.zone, s.x, s.y) && this.inSight(k, s));
+        this.roamGoal = choices.length ? choices[Math.floor(this.rand() * choices.length)] : null;
+        this.roamUntil = v.frame + 60 * 10;
+      }
+      if (this.roamGoal) this.plan = { kind: 'seek', ...this.roamGoal };
+    } else this.roamGoal = null;
   }
   private roamGoal: { x: number; y: number } | null = null;
+  private roamUntil = 0;
 
   /** Within `cone` radians of straight ahead. */
   private ahead(k: Kart, p: { x: number; y: number }, cone: number): boolean {
