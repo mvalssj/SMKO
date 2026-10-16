@@ -1,7 +1,7 @@
 // Dev check: item authority rules and shell simulation.
 // Usage: npx tsx tools/item-test.ts "<rom.sfc>"
 import { readFileSync } from 'node:fs';
-import { ItemAuthority, DEFAULT_ODDS, ROULETTE_MS, BOX_RESPAWN_MS } from '../shared/items';
+import { ItemAuthority, DEFAULT_ODDS, ROULETTE_MS, BOX_RESTORE_COUNT } from '../shared/items';
 import type { ServerMsg } from '../shared/protocol';
 import { SmkRom } from '../src/rom/rom';
 import { createKart } from '../src/game/physics';
@@ -34,8 +34,15 @@ check('item não pode ser usado durante a roleta', !sent.some((s) => s.msg.t ===
 clock += ROULETTE_MS + 1; auth.tick();
 auth.handle(2, { t: 'use', x: 100, y: 100, a: 0, back: false });
 check('item usado depois da roleta', sent.some((s) => s.msg.t === 'spawn' || s.msg.t === 'effect' || s.msg.t === 'coins'), rolled?.item);
-clock += BOX_RESPAWN_MS; auth.tick();
-check('caixa volta depois de 10s', last('tiles')?.restore === true);
+clock += 60_000; auth.tick();
+check('caixa não volta com o tempo', last('tiles')?.restore !== true);
+// 30 boxes taken (as in the original): they all come back.
+for (let n = 1; n < BOX_RESTORE_COUNT; n++) {
+  auth.handle(2, { t: 'use', x: 100, y: 100, a: 0, back: false });
+  auth.handle(2, { t: 'box', tiles: [2000 + n * 4] });
+  clock += ROULETTE_MS + 1; auth.tick();
+}
+check(`${BOX_RESTORE_COUNT} caixas pegas: todas voltam`, sent.filter((s) => s.msg.t === 'tiles' && s.msg.restore).length === BOX_RESTORE_COUNT);
 
 // Shell flow: give player 3 a red shell by rolling until we get one.
 const auth2 = new ItemAuthority({ leader: [0, 0, 0, 0, 0, 32, 0, 0, 0], middle: [0, 0, 0, 0, 0, 32, 0, 0, 0], back: [0, 0, 0, 0, 0, 32, 0, 0, 0] },

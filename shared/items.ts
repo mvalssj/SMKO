@@ -15,7 +15,11 @@ export const ROULETTE_STOP_MS = (3 * 1000) / 60;
 export const ROULETTE_SHOW_MS = (65 * 1000) / 60;
 /** From the box to the item in hand when nobody stops it. */
 export const ROULETTE_MS = ROULETTE_SPIN_MS + ROULETTE_SHOW_MS;
-export const BOX_RESPAWN_MS = 10_000;
+/**
+ * Used item boxes don't come back with time: as in the original (code at $C1:BECA, counter $1EB4), once 30 have
+ * been taken they all come back, in the order they were taken, and the count starts again.
+ */
+export const BOX_RESTORE_COUNT = 30;
 /** A shell's own speed, px a frame (the thrower's is added): the original's 768 / 256. */
 export const SHELL_BASE_SPEED = 3;
 export const MAX_COINS = 10;
@@ -43,7 +47,8 @@ type Send = (to: number | 'all', msg: ServerMsg, except?: number) => void;
 export class ItemAuthority {
   private players = new Map<number, PlayerItems>();
   private entities = new Map<number, NetEntity>();
-  private usedBoxes = new Map<number, { tiles: number[]; restoreAt: number }>();
+  /** Taken boxes, in the order they were taken. */
+  private usedBoxes = new Map<number, { tiles: number[] }>();
   private takenCoins = new Set<number>();
   private nextEntity = 1;
   /** Told when a player does something the game never does (uses an item they don't have). */
@@ -110,11 +115,9 @@ export class ItemAuthority {
         p.rolled = null;
       }
     }
-    for (const [key, box] of this.usedBoxes) {
-      if (now >= box.restoreAt) {
-        this.usedBoxes.delete(key);
-        this.send('all', { t: 'tiles', tiles: box.tiles, restore: true });
-      }
+    if (this.usedBoxes.size >= BOX_RESTORE_COUNT) {
+      for (const box of this.usedBoxes.values()) this.send('all', { t: 'tiles', tiles: box.tiles, restore: true });
+      this.usedBoxes.clear();
     }
   }
 
@@ -127,7 +130,7 @@ export class ItemAuthority {
     if (!tiles.length) return;
     const key = Math.min(...tiles);
     if (this.usedBoxes.has(key) || p.item || p.rolled) return;
-    this.usedBoxes.set(key, { tiles, restoreAt: this.now() + BOX_RESPAWN_MS });
+    this.usedBoxes.set(key, { tiles });
     this.send('all', { t: 'tiles', tiles, restore: false });
     p.rolled = this.roll(id, p);
     p.rollingUntil = this.now() + ROULETTE_MS;
