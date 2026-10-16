@@ -85,7 +85,8 @@ export function royaleMessage(ws: WebSocket, id: number, msg: ClientMsg): boolea
       updateKart(m, me, { ...msg.k, id });
       break;
     case 'cpu':
-      if (!isHost && racing) adminWarn(id, 'order');
+      // A handoff can reach the browser after a few CPU packets were queued. Ignore stale/non-host
+      // positions (never apply them) instead of counting each 20 Hz packet toward an automatic kick.
       if (!isHost || !Array.isArray(msg.karts)) break;
       for (const k of msg.karts.slice(0, ROYALE_PLAYERS)) {
         const p = m.players.get(k?.id);

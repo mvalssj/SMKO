@@ -277,7 +277,7 @@ const WARN_LABELS: Record<string, string> = {
 /** Something only a modified game would do; enough of them in a while and the player is sent away. */
 export function adminWarn(id: number, kind: keyof typeof WARN_LABELS) {
   const c = conns.get(id);
-  if (!c) return; // a bot (its browser's mistakes aren't the person's)
+  if (!c || c.ws.readyState !== WebSocket.OPEN) return; // a bot, or a connection already being closed
   const now = Date.now();
   c.warnings = c.warnings.filter((w) => now - w.at < WARN_WINDOW_MS);
   c.warnings.push({ at: now, kind });

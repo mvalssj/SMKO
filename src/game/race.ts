@@ -213,8 +213,10 @@ export class Race {
         if (m.t === 'states') this.remote.push(m.karts, this.local);
         else if (m.t === 'finished') this.noteFinisher(m.id, m.place);
         else if (o.royale) {
-          if (m.t === 'cpuHost' && m.id === o.selfId) this.adoptCpus();
-          else if (m.t === 'royaleSwap') this.swapIn(m.bot, m.player);
+          if (m.t === 'cpuHost') {
+            if (m.id === o.selfId) this.adoptCpus();
+            else this.releaseCpus();
+          } else if (m.t === 'royaleSwap') this.swapIn(m.bot, m.player);
           else if (m.t === 'break') { applyBreak(o.track, m.tiles); o.renderer.updateTiles(o.track, m.tiles); o.royale.nav.refresh(m.tiles); }
         } else if (m.t === 'balloons') {
           // onItemMessage records the count and sound after this listener.
@@ -783,6 +785,16 @@ export class Race {
     const screech = (input.brake && k.speed > 1) || (Math.abs(k.slide) > 0.3 && k.speed > 2);
     const offroad = k.speed > 1 && k.air === 0 && k.fall === 0 && terrainAt(this.o.track, k.x, k.y) === 'slow';
     s.loop(k.spin > 0 ? LOOP.spin : now < this.rollingUntil ? LOOP.itemBox : screech ? LOOP.brake : offroad ? LOOP.offroad : null);
+  }
+
+  /** A different browser now hosts the bots; drop our simulation immediately. */
+  private releaseCpus() {
+    if (!this.cpus.length) return;
+    const states = this.cpus.map((c) => netState(c.id, c.kart));
+    for (const c of this.cpus) this.local.delete(c.id);
+    this.cpus = [];
+    // Keep their last positions on screen until the new host sends its first snapshots.
+    this.remote.push(states, this.local);
   }
 
   /** We now simulate the CPUs (their browser left): carry on from where the others last saw them. */

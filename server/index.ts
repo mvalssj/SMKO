@@ -212,7 +212,8 @@ wss.on('connection', (ws, req) => {
         break;
 
       case 'cpu':
-        if (id !== r.cpuHost && r.phase === 'racing') adminWarn(id, 'order');
+        // Queued packets from a previous CPU host must never change server state or cause an
+        // automatic kick on an otherwise legitimate connection.
         if (id !== r.cpuHost || (r.phase !== 'countdown' && r.phase !== 'racing') || !Array.isArray(msg.karts)) break;
         for (const k of msg.karts) {
           const cpu = r.players.get(k?.id);

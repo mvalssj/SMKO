@@ -75,6 +75,15 @@ a.send({ t: 'cpu', karts: [{ id: moving.id, x: x0 + 16, y: y0, a: 0, s: 1, lap: 
 await sleep(400);
 const moved = b.got.some((m) => m.t === 'states' && m.karts.some((k) => k.id === moving.id && k.x === x0 + 16));
 check(moved, 'posição nova do bot chega aos outros jogadores');
+// A stale browser may still have queued CPU packets after a host handoff. Its packets must
+// not change the authoritative bot and must not auto-kick a legitimate player at 20 Hz.
+for (let i = 0; i < 35; i++) b.send({ t: 'cpu', karts: [{ id: moving.id, x: x0 + 600, y: y0, a: 0, s: 0, lap: 0, p: 0, f: 0, h: 0, e: 0 }] });
+await sleep(350);
+check(b.ws.readyState === WebSocket.OPEN && !b.got.some((m) => m.t === 'notice' && /desconectado automaticamente/.test(m.message)),
+  '35 pacotes de CPU de não anfitrião são ignorados sem desconectar o jogador');
+const latestBot = b.got.filter((m): m is Extract<ServerMsg, { t: 'states' }> => m.t === 'states')
+  .flatMap((m) => m.karts).filter((k) => k.id === moving.id).at(-1);
+check(latestBot?.x === x0 + 16, 'pacotes sem permissão não alteram a posição do bot no servidor');
 
 // Balloons: B pops three times after the start and is out.
 await sleep(Math.max(0, sa.startInMs - 1200));
